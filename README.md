@@ -1,4 +1,4 @@
-# PetPals PH - Laravel Backend
+# PetPals PH 
 
 This folder contains the Laravel backend scaffold for the PetPals PH veterinary clinic management application.
 
