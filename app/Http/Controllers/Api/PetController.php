@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pet;
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class PetController extends Controller
 {
@@ -33,7 +35,8 @@ class PetController extends Controller
             });
         }
 
-        $pets = $query->orderBy('created_at', 'desc')->paginate(20);
+        $pets = $query->orderBy('created_at', 'desc')
+            ->paginate($request->integer('per_page', 20));
 
         return response()->json($pets);
     }
@@ -59,7 +62,11 @@ class PetController extends Controller
         $user = $request->user();
 
         $validated = $request->validate([
-            'owner_id' => 'required_if:user_role,admin,veterinarian,receptionist|exists:users,id',
+            'owner_id' => [
+                Rule::requiredIf(!$user->isOwner()),
+                'nullable',
+                'exists:users,id',
+            ],
             'name' => 'required|string|max:255',
             'species' => 'required|in:dog,cat,bird,rabbit,hamster,fish,reptile,other',
             'breed' => 'required|string|max:255',
@@ -75,6 +82,12 @@ class PetController extends Controller
 
         if ($user->isOwner()) {
             $validated['owner_id'] = $user->id;
+        }
+
+        $owner = User::owners()->find($validated['owner_id']);
+
+        if (!$owner) {
+            return response()->json(['message' => 'Selected owner is invalid'], 422);
         }
 
         $pet = Pet::create($validated);

@@ -18,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button';
 
 interface NavItem {
+  id: string;
   label: string;
   path: string;
   icon: React.ReactNode;
@@ -26,64 +27,74 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   {
+    id: 'dashboard',
     label: 'Dashboard',
     path: '/dashboard',
     icon: <LayoutDashboard className="h-5 w-5" />,
-    roles: ['admin', 'veterinarian', 'receptionist', 'owner'],
+    roles: ['admin', 'vet_clinic', 'owner', 'veterinarian'],
   },
   {
+    id: 'animals',
     label: 'Animals',
     path: '/pets',
     icon: <Heart className="h-5 w-5" />,
-    roles: ['admin', 'veterinarian', 'receptionist', 'owner'],
+    roles: ['admin', 'vet_clinic', 'owner', 'veterinarian'],
   },
   {
+    id: 'owners',
     label: 'Owners',
     path: '/owners',
     icon: <Users className="h-5 w-5" />,
-    roles: ['admin', 'veterinarian', 'receptionist'],
+    roles: ['admin', 'vet_clinic'],
   },
   {
+    id: 'consultations',
     label: 'Consultations',
     path: '/medical-records',
     icon: <Stethoscope className="h-5 w-5" />,
-    roles: ['admin', 'veterinarian', 'owner'],
+    roles: ['admin', 'owner', 'vet_clinic', 'veterinarian'],
   },
   {
-    label: 'Vaccinations',
+    id: 'vaccination',
+    label: 'Vaccination',
     path: '/vaccinations',
     icon: <Syringe className="h-5 w-5" />,
-    roles: ['admin', 'veterinarian', 'receptionist', 'owner'],
+    roles: ['admin', 'vet_clinic', 'owner', 'veterinarian'],
   },
   {
+    id: 'appointments',
     label: 'Appointments',
     path: '/appointments',
     icon: <Calendar className="h-5 w-5" />,
-    roles: ['admin', 'veterinarian', 'receptionist', 'owner'],
+    roles: ['admin', 'vet_clinic', 'owner', 'veterinarian'],
   },
   {
+    id: 'reports',
     label: 'Reports',
     path: '/reports',
     icon: <FileText className="h-5 w-5" />,
-    roles: ['admin', 'veterinarian'],
+    roles: ['admin', 'vet_clinic'],
   },
   {
+    id: 'users',
     label: 'User Management',
     path: '/users',
     icon: <UserCog className="h-5 w-5" />,
     roles: ['admin'],
   },
   {
+    id: 'notifications',
     label: 'Notifications',
     path: '/notifications',
     icon: <Bell className="h-5 w-5" />,
-    roles: ['admin', 'veterinarian', 'receptionist', 'owner'],
+    roles: ['admin', 'vet_clinic', 'owner', 'veterinarian'],
   },
   {
+    id: 'settings',
     label: 'Settings',
     path: '/settings',
     icon: <Settings className="h-5 w-5" />,
-    roles: ['admin'],
+    roles: ['admin', 'vet_clinic'],
   },
 ];
 
@@ -96,7 +107,7 @@ export function Sidebar() {
   const filteredItems = navItems.filter(item => item.roles.includes(user.role));
 
   return (
-    <aside className="fixed left-0 top-0 z-40 h-screen w-64 gradient-sidebar">
+    <aside className="fixed left-0 top-0 z-40 h-screen w-64 gradient-sidebar" data-tour="sidebar-navigation">
       <div className="flex h-full flex-col">
         {/* Logo */}
         <div className="flex h-16 items-center gap-3 px-6 border-b border-sidebar-accent/30">
@@ -110,9 +121,10 @@ export function Sidebar() {
         <nav className="flex-1 overflow-y-auto px-3 py-4 scrollbar-thin">
           <ul className="space-y-1">
             {filteredItems.map((item) => (
-              <li key={item.path}>
+              <li key={item.id}>
                 <NavLink
                   to={item.path}
+                  data-tour={`nav-${item.id}`}
                   className={({ isActive }) =>
                     cn(
                       'flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-200',
@@ -138,7 +150,15 @@ export function Sidebar() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="truncate text-sm font-medium text-sidebar-foreground">{user.name}</p>
-              <p className="truncate text-xs text-sidebar-foreground/60 capitalize">{user.role}</p>
+              <p className="truncate text-xs text-sidebar-foreground/60 capitalize">
+                {user.role === 'owner'
+                  ? 'Pet Owner'
+                  : user.role === 'admin'
+                    ? 'Clinic Admin'
+                    : user.role === 'veterinarian'
+                      ? 'Veterinarian'
+                      : 'Vet Clinic'}
+              </p>
             </div>
           </div>
           <Button

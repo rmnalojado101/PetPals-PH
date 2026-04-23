@@ -23,6 +23,8 @@ class SettingsController extends Controller
             'email' => 'nullable|email|max:255',
             'opening_hours' => 'nullable|array',
             'logo' => 'nullable|string',
+            'vaccine_types' => 'nullable|array',
+            'vaccine_types.*' => 'nullable|string|max:255',
         ]);
 
         $settings = ClinicSettings::getInstance();

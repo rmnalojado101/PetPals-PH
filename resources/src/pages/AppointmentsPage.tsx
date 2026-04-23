@@ -1,12 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { 
-  appointmentsStorage, 
-  petsStorage, 
-  usersStorage,
-  notificationsStorage 
-} from '@/lib/storage';
-import type { Appointment, Pet } from '@/types';
+import { api } from '@/lib/api';
+import type { Appointment, AppointmentAvailability, Pet, User, Veterinarian } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,15 +47,16 @@ import {
   Check,
   X,
   Eye,
-  Filter
+  Filter,
+  Loader2
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { addMonths, format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
+import type { PaginatedResponse } from '@/types';
 
 const TIME_SLOTS = [
-  '08:00', '08:30', '09:00', '09:30', '10:00', '10:30',
-  '11:00', '11:30', '13:00', '13:30', '14:00', '14:30',
-  '15:00', '15:30', '16:00', '16:30', '17:00', '17:30',
+  '08:00', '09:00', '10:00', '11:00', '12:00',
+  '13:00', '14:00', '15:00', '16:00', '17:00'
 ];
 
 const STATUS_COLORS = {
@@ -70,54 +66,137 @@ const STATUS_COLORS = {
   cancelled: 'bg-red-100 text-red-800',
 };
 
+function getAppointmentDateString(appointment: Appointment): string {
+  return appointment.appointmentDate || appointment.date || '';
+}
+
+function getAppointmentTimeString(appointment: Appointment): string {
+  return appointment.appointmentTime || appointment.time || '';
+}
+
+function getAppointmentDateKey(appointment: Appointment): string {
+  const value = getAppointmentDateString(appointment);
+  return value ? value.slice(0, 10) : '';
+}
+
+function parseAppointmentDateKey(appointment: Appointment): Date | null {
+  const value = getAppointmentDateKey(appointment);
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
+}
+
+function getAvailabilityDateKey(availability: AppointmentAvailability): string {
+  return availability.appointmentDate ? availability.appointmentDate.slice(0, 10) : '';
+}
+
+function getAvailabilityTimeString(availability: AppointmentAvailability): string {
+  return availability.appointmentTime || '';
+}
+
+function sameId(left: string | number | undefined, right: string | number | undefined): boolean {
+  if (left === undefined || right === undefined) {
+    return false;
+  }
+
+  return left.toString() === right.toString();
+}
+
 export default function AppointmentsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [availabilitySlots, setAvailabilitySlots] = useState<AppointmentAvailability[]>([]);
+  const [pets, setPets] = useState<Pet[]>([]);
+  const [veterinarians, setVeterinarians] = useState<Veterinarian[]>([]);
+  const [clinics, setClinics] = useState<User[]>([]);
+  const [owners, setOwners] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isDataLoading, setIsDataLoading] = useState(true);
   const [viewingAppointment, setViewingAppointment] = useState<Appointment | null>(null);
   
   // Form state
+  const [step, setStep] = useState<1 | 2>(1);
   const [selectedDate, setSelectedDate] = useState<Date>();
   const [formData, setFormData] = useState({
+    clinicId: '',
+    ownerId: '',
     petId: '',
     veterinarianId: '',
     time: '',
     reason: '',
     notes: '',
   });
+  const activeClinicId = user?.role === 'vet_clinic' ? user.id?.toString() : formData.clinicId;
+  const availableVets = activeClinicId
+    ? veterinarians.filter(v => v.clinicId?.toString() === activeClinicId.toString())
+    : [];
 
-  useEffect(() => {
-    loadAppointments();
+  const loadData = useCallback(async () => {
+    if (!user) return;
+    setIsDataLoading(true);
+    
+    try {
+      const petsParams = user.role === 'owner' ? { owner_id: user.id } : {};
+      const [appointmentsResponse, petsResponse, vetsResponse, clinicsResponse, ownersResponse] = await Promise.all([
+        api.getAppointments(),
+        api.getPets(petsParams),
+        api.getVeterinarians(),
+        api.getUsers({ role: 'vet_clinic' }),
+        user.role !== 'owner' ? api.getOwners() : Promise.resolve([])
+      ]);
+      
+      setAppointments(Array.isArray(appointmentsResponse) ? appointmentsResponse : (appointmentsResponse as PaginatedResponse<Appointment>).data);
+      setPets(Array.isArray(petsResponse) ? petsResponse : (petsResponse as PaginatedResponse<Pet>).data);
+      setVeterinarians(vetsResponse);
+      setClinics(Array.isArray(clinicsResponse) ? clinicsResponse : (clinicsResponse as PaginatedResponse<User>).data);
+      if (user.role !== 'owner') {
+        setOwners(ownersResponse);
+      }
+    } catch (error) {
+      console.error('Error loading appointments:', error);
+    } finally {
+      setIsDataLoading(false);
+    }
   }, [user]);
 
-  const loadAppointments = () => {
-    if (!user) return;
-    
-    let data: Appointment[];
-    if (user.role === 'owner') {
-      data = appointmentsStorage.getByOwner(user.id);
-    } else if (user.role === 'veterinarian') {
-      data = appointmentsStorage.getByVet(user.id);
-    } else {
-      data = appointmentsStorage.getAll();
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!isDialogOpen || !formData.veterinarianId) {
+      setAvailabilitySlots([]);
+      return;
     }
-    
-    // Sort by date and time
-    data.sort((a, b) => {
-      const dateCompare = b.date.localeCompare(a.date);
-      if (dateCompare !== 0) return dateCompare;
-      return b.time.localeCompare(a.time);
-    });
-    
-    setAppointments(data);
-  };
+
+    const loadAvailability = async () => {
+      try {
+        const today = new Date();
+        const availability = await api.getAppointmentAvailability({
+          veterinarian_id: formData.veterinarianId,
+          clinic_id: activeClinicId,
+          start_date: format(today, 'yyyy-MM-dd'),
+          end_date: format(addMonths(today, 12), 'yyyy-MM-dd'),
+        });
+
+        setAvailabilitySlots(availability);
+      } catch (error) {
+        console.error('Error loading appointment availability:', error);
+        setAvailabilitySlots([]);
+      }
+    };
+
+    loadAvailability();
+  }, [isDialogOpen, formData.veterinarianId, activeClinicId]);
 
   const resetForm = () => {
     setFormData({
+      clinicId: '',
+      ownerId: '',
       petId: '',
       veterinarianId: '',
       time: '',
@@ -125,9 +204,10 @@ export default function AppointmentsPage() {
       notes: '',
     });
     setSelectedDate(undefined);
+    setStep(1);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!selectedDate || !formData.petId || !formData.veterinarianId || !formData.time) {
@@ -141,126 +221,121 @@ export default function AppointmentsPage() {
 
     const dateStr = format(selectedDate, 'yyyy-MM-dd');
 
-    // Check for time conflict
-    if (appointmentsStorage.checkConflict(formData.veterinarianId, dateStr, formData.time)) {
+    try {
+      await api.createAppointment({
+        pet_id: formData.petId,
+        clinic_id: (user?.role === 'vet_clinic' ? user.id : formData.clinicId) || undefined,
+        owner_id: user?.role === 'owner' ? user.id : formData.ownerId,
+        veterinarian_id: formData.veterinarianId,
+        appointment_date: dateStr,
+        appointment_time: formData.time,
+        reason: formData.reason,
+        notes: formData.notes,
+      });
+
       toast({
-        title: 'Time Conflict',
-        description: 'This time slot is already booked. Please choose another.',
+        title: 'Appointment Booked',
+        description: 'Successfully saved to database.',
+      });
+
+      void loadData();
+      setIsDialogOpen(false);
+      resetForm();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Time conflict or server error.';
+      toast({
+        title: 'Booking Failed',
+        description: message,
         variant: 'destructive',
       });
-      return;
     }
+  };
 
-    const pet = petsStorage.getById(formData.petId);
-    
-    appointmentsStorage.create({
-      petId: formData.petId,
-      ownerId: user?.role === 'owner' ? user.id : pet?.ownerId || '',
-      veterinarianId: formData.veterinarianId,
-      date: dateStr,
-      time: formData.time,
-      reason: formData.reason,
-      status: user?.role === 'owner' ? 'pending' : 'approved',
-      notes: formData.notes,
+  const checkConflict = (vetId: string, dateStr: string, time: string) => {
+    return availabilitySlots.some((availability) => {
+      const aptDate = getAvailabilityDateKey(availability);
+      const aptTime = getAvailabilityTimeString(availability);
+      const aptVetId = availability.veterinarianId;
+      return aptVetId?.toString() === vetId.toString() && 
+             aptDate === dateStr && 
+             aptTime === time && 
+             availability.status !== 'cancelled';
     });
+  };
 
-    // Create notification for vet
-    const vet = usersStorage.getById(formData.veterinarianId);
-    if (vet) {
-      notificationsStorage.create({
-        userId: vet.id,
-        title: 'New Appointment Request',
-        message: `Appointment for ${pet?.name} on ${format(selectedDate, 'MMMM d, yyyy')} at ${formData.time}`,
-        type: 'appointment',
+  const handleStatusChange = async (appointmentId: string, newStatus: Appointment['status']) => {
+    try {
+      await api.updateAppointment(appointmentId, { status: newStatus });
+      toast({
+        title: 'Status Updated',
+        description: `Appointment marked as ${newStatus}.`,
+      });
+      void loadData();
+    } catch (error) {
+       toast({
+        title: 'Update Failed',
+        description: 'Could not update status.',
+        variant: 'destructive',
       });
     }
-
-    toast({
-      title: 'Appointment Booked',
-      description: user?.role === 'owner' 
-        ? 'Your appointment request has been submitted for approval.'
-        : 'Appointment has been scheduled.',
-    });
-
-    loadAppointments();
-    setIsDialogOpen(false);
-    resetForm();
   };
 
-  const handleStatusChange = (appointmentId: string, newStatus: Appointment['status']) => {
-    const apt = appointmentsStorage.getById(appointmentId);
-    if (!apt) return;
-
-    appointmentsStorage.update(appointmentId, { status: newStatus });
-
-    // Notify owner
-    notificationsStorage.create({
-      userId: apt.ownerId,
-      title: `Appointment ${newStatus.charAt(0).toUpperCase() + newStatus.slice(1)}`,
-      message: `Your appointment on ${apt.date} at ${apt.time} has been ${newStatus}.`,
-      type: 'appointment',
-    });
-
-    toast({
-      title: 'Status Updated',
-      description: `Appointment marked as ${newStatus}.`,
-    });
-
-    loadAppointments();
-  };
-
-  const vets = usersStorage.getByRole('veterinarian');
-  const myPets = user?.role === 'owner' 
-    ? petsStorage.getByOwner(user.id)
-    : petsStorage.getAll();
-
+  const allOwners = owners.filter(o => o.role === 'owner');
+  
   const filteredAppointments = appointments.filter(apt => {
-    const pet = petsStorage.getById(apt.petId);
-    const owner = usersStorage.getById(apt.ownerId);
+    const petName = apt.pet?.name || '';
+    const ownerName = apt.owner?.name || '';
     const matchesSearch = 
-      pet?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      owner?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      petName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      ownerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       apt.reason.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || apt.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const upcomingAppointments = filteredAppointments.filter(a => a.date >= todayStr);
-  const pastAppointments = filteredAppointments.filter(a => a.date < todayStr);
+  const todayKey = format(new Date(), 'yyyy-MM-dd');
+  const upcomingAppointments = filteredAppointments.filter((appointment) => {
+    const appointmentDateKey = getAppointmentDateKey(appointment);
+    return appointmentDateKey ? appointmentDateKey >= todayKey : false;
+  });
+  const pastAppointments = filteredAppointments.filter((appointment) => {
+    const appointmentDateKey = getAppointmentDateKey(appointment);
+    return appointmentDateKey ? appointmentDateKey < todayKey : false;
+  });
 
   const renderAppointmentRow = (apt: Appointment) => {
-    const pet = petsStorage.getById(apt.petId);
-    const owner = usersStorage.getById(apt.ownerId);
-    const vet = usersStorage.getById(apt.veterinarianId);
+    const petName = apt.pet?.name || 'Animal';
+    const petSpecies = apt.pet?.species || '';
+    const ownerName = apt.owner?.name || 'Unknown';
+    const vetName = apt.veterinarian?.name || 'Not Assigned';
+    const aDate = getAppointmentDateKey(apt);
+    const aTime = getAppointmentTimeString(apt);
 
     return (
       <TableRow key={apt.id}>
         <TableCell>
           <div>
-            <p className="font-medium">{format(new Date(apt.date), 'MMM d, yyyy')}</p>
-            <p className="text-sm text-muted-foreground">{apt.time}</p>
+            <p className="font-medium">{aDate ? format(parseISO(aDate), 'MMM d, yyyy') : ''}</p>
+            <p className="text-sm text-muted-foreground">{aTime}</p>
           </div>
         </TableCell>
         <TableCell>
           <div>
-            <p className="font-medium">{pet?.name || 'Unknown Pet'}</p>
-            <p className="text-sm text-muted-foreground capitalize">{pet?.species}</p>
+            <p className="font-medium">{petName}</p>
+            <p className="text-sm text-muted-foreground capitalize">{petSpecies}</p>
           </div>
         </TableCell>
         {user?.role !== 'owner' && (
           <TableCell>
             <div>
-              <p className="font-medium">{owner?.name || 'Unknown'}</p>
-              <p className="text-sm text-muted-foreground">{owner?.phone}</p>
+              <p className="font-medium">{ownerName}</p>
+              <p className="text-sm text-muted-foreground">{apt.owner?.phone}</p>
             </div>
           </TableCell>
         )}
-        {user?.role !== 'veterinarian' && (
-          <TableCell>
-            <p className="font-medium">{vet?.name || 'Not Assigned'}</p>
-          </TableCell>
-        )}
+        <TableCell>
+          <p className="font-medium">{vetName}</p>
+        </TableCell>
         <TableCell>
           <p className="line-clamp-2">{apt.reason}</p>
         </TableCell>
@@ -278,7 +353,7 @@ export default function AppointmentsPage() {
             >
               <Eye className="h-4 w-4" />
             </Button>
-            {apt.status === 'pending' && (user?.role === 'admin' || user?.role === 'receptionist' || user?.role === 'veterinarian') && (
+            {apt.status === 'pending' && (user?.role === 'admin' || user?.role === 'vet_clinic' || user?.role === 'veterinarian') && (
               <>
                 <Button
                   variant="ghost"
@@ -298,7 +373,7 @@ export default function AppointmentsPage() {
                 </Button>
               </>
             )}
-            {apt.status === 'approved' && user?.role === 'veterinarian' && (
+            {apt.status === 'approved' && (user?.role === 'admin' || user?.role === 'vet_clinic' || user?.role === 'veterinarian') && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -313,8 +388,17 @@ export default function AppointmentsPage() {
     );
   };
 
+  if (isDataLoading && appointments.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh]">
+        <Loader2 className="h-10 w-10 animate-spin text-primary opacity-50" />
+        <p className="mt-4 text-muted-foreground">Loading Appointments...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in" data-tour="appointments-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Appointments</h1>
@@ -331,127 +415,252 @@ export default function AppointmentsPage() {
               Book Appointment
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-lg">
+          <DialogContent className={cn("transition-all duration-300", step === 1 ? "max-w-3xl" : "max-w-lg")}>
             <DialogHeader>
               <DialogTitle>Book New Appointment</DialogTitle>
               <DialogDescription>
-                Schedule an appointment for your pet
+                {step === 1 ? "Select an available date and time for your appointment." : "Provide the details for your appointment."}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit}>
-              <div className="grid gap-4 py-4">
-                <div className="space-y-2">
-                  <Label>Pet *</Label>
-                  <Select
-                    value={formData.petId}
-                    onValueChange={(value) => setFormData({ ...formData, petId: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select pet" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {myPets.map((pet) => (
-                        <SelectItem key={pet.id} value={pet.id}>
-                          {pet.name} ({pet.species})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Veterinarian *</Label>
-                  <Select
-                    value={formData.veterinarianId}
-                    onValueChange={(value) => setFormData({ ...formData, veterinarianId: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select veterinarian" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {vets.map((vet) => (
-                        <SelectItem key={vet.id} value={vet.id}>
-                          {vet.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Date *</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={cn(
-                            'w-full justify-start text-left font-normal',
-                            !selectedDate && 'text-muted-foreground'
-                          )}
+              {step === 1 ? (
+                <div className="grid md:grid-cols-2 gap-6 py-4">
+                  <div className="space-y-4">
+                    {user?.role !== 'vet_clinic' && (
+                      <div className="space-y-2">
+                        <Label className="text-base font-semibold">Select Clinic *</Label>
+                        <Select
+                          value={formData.clinicId}
+                          onValueChange={(value) => setFormData({ ...formData, clinicId: value, veterinarianId: '', time: '' })}
                         >
-                          <CalendarIcon className="mr-2 h-4 w-4" />
-                          {selectedDate ? format(selectedDate, 'PPP') : 'Pick a date'}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose a clinic" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {clinics.map(clinic => (
+                              <SelectItem key={clinic.id} value={clinic.id.toString()}>
+                                {clinic.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    {activeClinicId && (
+                      <div className="space-y-2">
+                        <Label className="text-base font-semibold">Select Veterinarian Doctor *</Label>
+                        <Select
+                          value={formData.veterinarianId}
+                          onValueChange={(value) => setFormData({ ...formData, veterinarianId: value, time: '' })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose a doctor" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableVets.map(vet => (
+                              <SelectItem key={vet.id} value={vet.id.toString()}>
+                                {vet.name} {vet.specialty ? `(${vet.specialty})` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {formData.veterinarianId && (() => {
+                          const v = availableVets.find(x => x.id === formData.veterinarianId);
+                          return v?.background ? <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{v.background}</p> : null;
+                        })()}
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                       <Label className="text-base font-semibold" style={{ opacity: formData.veterinarianId ? 1 : 0.5 }}>Select Date *</Label>
+                       <div className={cn("border rounded-md p-4 inline-block w-full flex justify-center bg-card", !formData.veterinarianId && "opacity-50 pointer-events-none")}>
                         <Calendar
                           mode="single"
                           selected={selectedDate}
-                          onSelect={setSelectedDate}
-                          disabled={(date) => date < new Date()}
+                          onSelect={(date) => {
+                            setSelectedDate(date);
+                            setFormData({ ...formData, time: '' });
+                          }}
+                          disabled={(date) => {
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            if (date < today) return true;
+                            if (formData.veterinarianId) {
+                               const dateStr = format(date, 'yyyy-MM-dd');
+                               const bookedSlots = TIME_SLOTS.filter(time => checkConflict(formData.veterinarianId, dateStr, time));
+                               if (bookedSlots.length === TIME_SLOTS.length) return true; // Fully Booked
+                            }
+                            return false;
+                          }}
+                          components={{
+                            DayContent: ({ date }) => {
+                              let isFullyBooked = false;
+                              if (formData.veterinarianId) {
+                                 const today = new Date();
+                                 today.setHours(0, 0, 0, 0);
+                                 if (date >= today) {
+                                   const dateStr = format(date, 'yyyy-MM-dd');
+                                   const bookedSlots = TIME_SLOTS.filter(time => checkConflict(formData.veterinarianId, dateStr, time));
+                                   isFullyBooked = bookedSlots.length === TIME_SLOTS.length;
+                                 }
+                              }
+                              
+                              return (
+                                <div className="relative w-full h-full flex items-center justify-center">
+                                  <span className={cn(isFullyBooked && "opacity-20 line-through")}>{date.getDate()}</span>
+                                  {isFullyBooked && (
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-visible z-10 w-full scale-125">
+                                       <span className="text-[7.5px] text-destructive leading-tight font-black border border-destructive bg-background/90 px-0.5 rounded shadow-sm text-center tracking-tighter whitespace-nowrap">
+                                         FULLY<br/>BOOKED
+                                       </span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                          }}
                           initialFocus
                         />
-                      </PopoverContent>
-                    </Popover>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <Label className="text-base font-semibold">Available Times *</Label>
+                    {selectedDate && formData.veterinarianId ? (
+                      <div className="grid grid-cols-3 gap-2">
+                        {TIME_SLOTS.map((time) => {
+                          const dateStr = format(selectedDate, 'yyyy-MM-dd');
+                          const isBooked = checkConflict(formData.veterinarianId, dateStr, time);
+                          return (
+                            <Button
+                              key={time}
+                              type="button"
+                              variant={formData.time === time ? 'default' : 'outline'}
+                              disabled={isBooked}
+                              className={cn("w-full relative overflow-hidden transition-all", isBooked && "opacity-40 cursor-not-allowed line-through bg-muted")}
+                              onClick={() => setFormData({ ...formData, time })}
+                            >
+                              <span className={cn(isBooked && "opacity-20")}>{time}</span>
+                              {isBooked && (
+                                <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-destructive no-underline tracking-widest bg-background/50 drop-shadow-sm">
+                                  RESERVED
+                                </span>
+                              )}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="flex h-[300px] items-center justify-center border rounded-md bg-muted/20 text-muted-foreground text-sm flex-col gap-2 opacity-70">
+                         <CalendarIcon className="h-8 w-8 mb-2" />
+                         {formData.veterinarianId ? "Please select a date first" : "Please select a doctor to view their schedule"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Selected Schedule</Label>
+                    <div className="p-3 bg-muted rounded-md flex items-center gap-2">
+                      <CalendarIcon className="h-4 w-4" />
+                      <span className="font-medium">
+                        {selectedDate ? format(selectedDate, 'MMMM d, yyyy') : ''} at {formData.time}
+                      </span>
+                    </div>
                   </div>
 
+                  {user?.role !== 'owner' && (
+                    <div className="space-y-2">
+                      <Label>Owner *</Label>
+                      <Select
+                        value={formData.ownerId}
+                        onValueChange={(value) => setFormData({ ...formData, ownerId: value, petId: '' })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select pet owner" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {allOwners.map((owner) => (
+                            <SelectItem key={owner.id} value={owner.id.toString()}>
+                              {owner.name} ({owner.email})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
                   <div className="space-y-2">
-                    <Label>Time *</Label>
+                    <Label>Pet *</Label>
                     <Select
-                      value={formData.time}
-                      onValueChange={(value) => setFormData({ ...formData, time: value })}
+                      value={formData.petId}
+                      onValueChange={(value) => setFormData({ ...formData, petId: value })}
+                      disabled={user?.role !== 'owner' && !formData.ownerId}
                     >
                       <SelectTrigger>
-                        <Clock className="mr-2 h-4 w-4" />
-                        <SelectValue placeholder="Select time" />
+                        <SelectValue placeholder={user?.role !== 'owner' && !formData.ownerId ? "Select an owner first" : "Select pet"} />
                       </SelectTrigger>
                       <SelectContent>
-                        {TIME_SLOTS.map((time) => (
-                          <SelectItem key={time} value={time}>
-                            {time}
+                        {pets
+                          .filter((pet) => user?.role === 'owner'
+                            ? sameId(pet.ownerId, user.id)
+                            : sameId(pet.ownerId, formData.ownerId))
+                          .map((pet) => (
+                          <SelectItem key={pet.id} value={pet.id.toString()}>
+                            {pet.name} ({pet.species})
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
-                </div>
 
-                <div className="space-y-2">
-                  <Label>Reason for Visit *</Label>
-                  <Input
-                    value={formData.reason}
-                    onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
-                    placeholder="e.g., Annual checkup, Vaccination, Illness"
-                    required
-                  />
-                </div>
+                   <div className="space-y-2">
+                    <Label>Reason for Visit *</Label>
+                    <Input
+                      value={formData.reason}
+                      onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+                      placeholder="e.g., Annual checkup, Vaccination, Illness"
+                      required
+                    />
+                  </div>
 
-                <div className="space-y-2">
-                  <Label>Additional Notes</Label>
-                  <Textarea
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    placeholder="Any additional information..."
-                    rows={3}
-                  />
+                  <div className="space-y-2">
+                    <Label>Additional Notes</Label>
+                    <Textarea
+                      value={formData.notes}
+                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                      placeholder="Any additional information..."
+                      rows={3}
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
+              
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit">Book Appointment</Button>
+                {step === 1 ? (
+                  <>
+                    <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button 
+                      type="button" 
+                      onClick={() => setStep(2)}
+                      disabled={!selectedDate || !formData.time}
+                    >
+                      Next Step
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button type="button" variant="outline" onClick={() => setStep(1)}>
+                      Back
+                    </Button>
+                    <Button type="submit">Book Appointment</Button>
+                  </>
+                )}
               </DialogFooter>
             </form>
           </DialogContent>
@@ -465,18 +674,22 @@ export default function AppointmentsPage() {
             <DialogTitle>Appointment Details</DialogTitle>
           </DialogHeader>
           {viewingAppointment && (() => {
-            const pet = petsStorage.getById(viewingAppointment.petId);
-            const owner = usersStorage.getById(viewingAppointment.ownerId);
-            const vet = usersStorage.getById(viewingAppointment.veterinarianId);
+            const petName = viewingAppointment.pet?.name || 'Animal';
+            const petSpecies = viewingAppointment.pet?.species || '';
+            const ownerName = viewingAppointment.owner?.name || 'Unknown';
+            const vetName = viewingAppointment.veterinarian?.name || 'Not Managed';
+            const aDate = getAppointmentDateKey(viewingAppointment);
+            const aTime = getAppointmentTimeString(viewingAppointment);
+
             return (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label className="text-muted-foreground">Date & Time</Label>
                     <p className="font-medium">
-                      {format(new Date(viewingAppointment.date), 'MMMM d, yyyy')}
+                      {aDate ? format(parseISO(aDate), 'MMMM d, yyyy') : ''}
                     </p>
-                    <p>{viewingAppointment.time}</p>
+                    <p>{aTime}</p>
                   </div>
                   <div>
                     <Label className="text-muted-foreground">Status</Label>
@@ -487,17 +700,17 @@ export default function AppointmentsPage() {
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Pet</Label>
-                  <p className="font-medium">{pet?.name}</p>
-                  <p className="text-sm text-muted-foreground capitalize">{pet?.species} - {pet?.breed}</p>
+                  <p className="font-medium">{petName}</p>
+                  <p className="text-sm text-muted-foreground capitalize">{petSpecies}</p>
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Owner</Label>
-                  <p className="font-medium">{owner?.name}</p>
-                  <p className="text-sm text-muted-foreground">{owner?.phone}</p>
+                  <p className="font-medium">{ownerName}</p>
+                  <p className="text-sm text-muted-foreground">{viewingAppointment.owner?.phone}</p>
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Veterinarian</Label>
-                  <p className="font-medium">{vet?.name}</p>
+                  <p className="font-medium">{vetName}</p>
                 </div>
                 <div>
                   <Label className="text-muted-foreground">Reason</Label>
@@ -576,7 +789,7 @@ export default function AppointmentsPage() {
                       <TableHead>Date/Time</TableHead>
                       <TableHead>Pet</TableHead>
                       {user?.role !== 'owner' && <TableHead>Owner</TableHead>}
-                      {user?.role !== 'veterinarian' && <TableHead>Veterinarian</TableHead>}
+                      <TableHead>Veterinarian</TableHead>
                       <TableHead>Reason</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
@@ -605,7 +818,7 @@ export default function AppointmentsPage() {
                       <TableHead>Date/Time</TableHead>
                       <TableHead>Pet</TableHead>
                       {user?.role !== 'owner' && <TableHead>Owner</TableHead>}
-                      {user?.role !== 'veterinarian' && <TableHead>Veterinarian</TableHead>}
+                      <TableHead>Veterinarian</TableHead>
                       <TableHead>Reason</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>

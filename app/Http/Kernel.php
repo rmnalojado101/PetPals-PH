@@ -14,7 +14,6 @@ class Kernel extends HttpKernel
         'web' => [],
 
         'api' => [
-            'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
     ];
@@ -22,5 +21,6 @@ class Kernel extends HttpKernel
     protected $routeMiddleware = [
         'auth' => \Illuminate\Auth\Middleware\Authenticate::class,
         'role' => \App\Http\Middleware\CheckRole::class,
+        'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
     ];
 }

@@ -1,11 +1,24 @@
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { settingsStorage } from '@/lib/storage';
+import { api } from '@/lib/api';
 import { Activity } from 'lucide-react';
 
 export function WelcomeBanner() {
   const { user } = useAuth();
-  const settings = settingsStorage.get();
+  const [clinicName, setClinicName] = useState('Petpals PH');
   
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await api.getSettings();
+        if (settings.name) setClinicName(settings.name);
+      } catch (error) {
+        console.error('Error loading clinic name:', error);
+      }
+    };
+    loadSettings();
+  }, []);
+
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -20,11 +33,13 @@ export function WelcomeBanner() {
     return 'Good Evening';
   };
 
+  const displayClinicName = clinicName.replace(/\s*Veterinary Clinic\s*$/i, '').trim();
+
   return (
     <div className="relative overflow-hidden rounded-2xl gradient-primary p-6 md:p-8 text-white">
       <div className="relative z-10">
         <h1 className="text-2xl md:text-3xl font-bold mb-2">
-          Welcome to {settings.name}
+          Welcome to {displayClinicName}
         </h1>
         <p className="text-white/80 text-lg">{today}</p>
         {user && (

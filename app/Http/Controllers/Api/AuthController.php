@@ -18,13 +18,14 @@ class AuthController extends Controller
             'password' => 'required|string|min:8|confirmed',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
+            'role' => 'nullable|in:owner,vet_clinic',
         ]);
 
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
-            'role' => 'owner',
+            'role' => $validated['role'] ?? 'owner',
             'phone' => $validated['phone'] ?? null,
             'address' => $validated['address'] ?? null,
         ]);

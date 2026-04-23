@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { usersStorage } from '@/lib/storage';
-import type { User } from '@/types';
+import { api } from '@/lib/api';
+import type { PaginatedResponse, User } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -41,13 +41,13 @@ import {
   Edit,
   Trash2,
   UserCog,
-  Filter
+  Filter,
+  Loader2
 } from 'lucide-react';
 
 const ROLE_COLORS = {
   admin: 'bg-purple-100 text-purple-800',
-  veterinarian: 'bg-blue-100 text-blue-800',
-  receptionist: 'bg-green-100 text-green-800',
+  vet_clinic: 'bg-green-100 text-green-800',
   owner: 'bg-gray-100 text-gray-800',
 };
 
@@ -59,6 +59,8 @@ export default function UsersPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   
   // Form state
@@ -71,13 +73,22 @@ export default function UsersPage() {
     address: '',
   });
 
-  useEffect(() => {
-    loadUsers();
-  }, []);
+  const loadUsers = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const response = await api.getUsers({ role: roleFilter !== 'all' ? roleFilter : undefined });
+      // Laravel returns a paginated object
+      setUsers(Array.isArray(response) ? response : (response as PaginatedResponse<User>).data); 
+    } catch (error) {
+      console.error('Failed to load users:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [roleFilter]);
 
-  const loadUsers = () => {
-    setUsers(usersStorage.getAll());
-  };
+  useEffect(() => {
+    void loadUsers();
+  }, [loadUsers]);
 
   const resetForm = () => {
     setFormData({
@@ -91,7 +102,7 @@ export default function UsersPage() {
     setEditingUser(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formData.name || !formData.email) {
@@ -103,54 +114,55 @@ export default function UsersPage() {
       return;
     }
 
-    // Check for duplicate email
-    const existingUser = usersStorage.getByEmail(formData.email);
-    if (existingUser && (!editingUser || existingUser.id !== editingUser.id)) {
+    setIsSubmitting(true);
+
+    try {
+      if (editingUser) {
+        const updateData: Record<string, string> = {
+          name: formData.name,
+          email: formData.email,
+          role: formData.role,
+          phone: formData.phone,
+          address: formData.address,
+        };
+        if (formData.password) {
+          updateData.password = formData.password;
+        }
+        await api.updateUser(editingUser.id, updateData);
+        toast({
+          title: 'User Updated',
+          description: 'User profile has been updated in MySQL.',
+        });
+      } else {
+        if (!formData.password) {
+          toast({
+            title: 'Password Required',
+            description: 'Please set a password for the new user.',
+            variant: 'destructive',
+          });
+          setIsSubmitting(false);
+          return;
+        }
+        await api.createUser(formData);
+        toast({
+          title: 'User Created',
+          description: 'New user has been added to database.',
+        });
+      }
+
+      await loadUsers();
+      setIsDialogOpen(false);
+      resetForm();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to save user.';
       toast({
-        title: 'Email Already Exists',
-        description: 'This email is already registered.',
+        title: 'Error',
+        description: message,
         variant: 'destructive',
       });
-      return;
+    } finally {
+      setIsSubmitting(false);
     }
-
-    if (editingUser) {
-      const updateData: Partial<User> = {
-        name: formData.name,
-        email: formData.email,
-        role: formData.role,
-        phone: formData.phone,
-        address: formData.address,
-      };
-      if (formData.password) {
-        updateData.password = formData.password;
-      }
-      usersStorage.update(editingUser.id, updateData);
-      toast({
-        title: 'User Updated',
-        description: 'User profile has been updated.',
-      });
-    } else {
-      if (!formData.password) {
-        toast({
-          title: 'Password Required',
-          description: 'Please set a password for the new user.',
-          variant: 'destructive',
-        });
-        return;
-      }
-      usersStorage.create({
-        ...formData,
-      });
-      toast({
-        title: 'User Created',
-        description: 'New user has been added.',
-      });
-    }
-
-    loadUsers();
-    setIsDialogOpen(false);
-    resetForm();
   };
 
   const handleEdit = (user: User) => {
@@ -166,7 +178,7 @@ export default function UsersPage() {
     setIsDialogOpen(true);
   };
 
-  const handleDelete = (user: User) => {
+  const handleDelete = async (user: User) => {
     if (user.id === currentUser?.id) {
       toast({
         title: 'Cannot Delete',
@@ -177,30 +189,44 @@ export default function UsersPage() {
     }
     
     if (confirm(`Are you sure you want to delete ${user.name}?`)) {
-      usersStorage.delete(user.id);
-      toast({
-        title: 'User Deleted',
-        description: `${user.name} has been removed.`,
-        variant: 'destructive',
-      });
-      loadUsers();
+      try {
+        await api.deleteUser(user.id);
+        toast({
+          title: 'User Deleted',
+          description: `${user.name} has been removed from database.`,
+          variant: 'destructive',
+        });
+        void loadUsers();
+      } catch (error) {
+        toast({ title: 'Delete Failed', variant: 'destructive' });
+      }
     }
   };
 
-  const filteredUsers = users.filter(user => {
-    const matchesSearch = 
-      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
+  const filteredUsers = users.filter((listedUser) => {
+    const search = searchTerm.toLowerCase();
+    const matchesSearch =
+      listedUser.name.toLowerCase().includes(search) ||
+      listedUser.email.toLowerCase().includes(search);
+    const matchesRole = roleFilter === 'all' || listedUser.role === roleFilter;
     return matchesSearch && matchesRole;
   });
 
+  if (isLoading && users.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh]">
+        <Loader2 className="h-10 w-10 animate-spin text-primary opacity-50" />
+        <p className="mt-4 text-muted-foreground">Loading Users...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in" data-tour="users-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">User Management</h1>
-          <p className="text-muted-foreground">Manage system users and roles</p>
+          <p className="text-muted-foreground">Manage system users and roles in MySQL database</p>
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
@@ -262,9 +288,8 @@ export default function UsersPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="veterinarian">Veterinarian</SelectItem>
-                      <SelectItem value="receptionist">Receptionist</SelectItem>
+                      <SelectItem value="admin">System Administrator</SelectItem>
+                      <SelectItem value="vet_clinic">Vet Clinic</SelectItem>
                       <SelectItem value="owner">Pet Owner</SelectItem>
                     </SelectContent>
                   </Select>
@@ -289,11 +314,11 @@ export default function UsersPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>
                   Cancel
                 </Button>
-                <Button type="submit">
-                  {editingUser ? 'Update User' : 'Add User'}
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? 'Saving...' : (editingUser ? 'Update User' : 'Add User')}
                 </Button>
               </DialogFooter>
             </form>
@@ -314,16 +339,17 @@ export default function UsersPage() {
                 className="pl-10"
               />
             </div>
-            <Select value={roleFilter} onValueChange={setRoleFilter}>
+            <Select value={roleFilter} onValueChange={(val) => {
+               setRoleFilter(val);
+            }}>
               <SelectTrigger className="w-full sm:w-48">
                 <Filter className="mr-2 h-4 w-4" />
                 <SelectValue placeholder="Filter by role" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Roles</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-                <SelectItem value="veterinarian">Veterinarian</SelectItem>
-                <SelectItem value="receptionist">Receptionist</SelectItem>
+                <SelectItem value="admin">System Administrator</SelectItem>
+                <SelectItem value="vet_clinic">Vet Clinic</SelectItem>
                 <SelectItem value="owner">Pet Owner</SelectItem>
               </SelectContent>
             </Select>
@@ -334,14 +360,20 @@ export default function UsersPage() {
       {/* Users Table */}
       <Card>
         <CardContent className="p-0">
-          {filteredUsers.length === 0 ? (
+          {(isLoading || filteredUsers.length === 0) ? (
             <div className="py-16 text-center">
-              <UserCog className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-              <h3 className="text-lg font-semibold mb-2">No users found</h3>
+              {isLoading ? (
+                <Loader2 className="h-16 w-16 mx-auto mb-4 text-muted-foreground animate-spin opacity-50" />
+              ) : (
+                <UserCog className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+              )}
+              <h3 className="text-lg font-semibold mb-2">
+                {isLoading ? 'Loading Users...' : 'No users found'}
+              </h3>
               <p className="text-muted-foreground">
-                {searchTerm || roleFilter !== 'all' 
+                {!isLoading && (searchTerm || roleFilter !== 'all' 
                   ? 'Try adjusting your search or filters' 
-                  : 'Add your first user to get started'}
+                  : 'Add your first user to get started')}
               </p>
             </div>
           ) : (
@@ -370,10 +402,9 @@ export default function UsersPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge className={ROLE_COLORS[user.role]}>
-                        {user.role === 'veterinarian' ? 'Veterinarian' : 
-                         user.role === 'receptionist' ? 'Receptionist' :
-                         user.role === 'admin' ? 'Admin' : 'Pet Owner'}
+                      <Badge className={ROLE_COLORS[user.role as keyof typeof ROLE_COLORS]}>
+                        {user.role === 'vet_clinic' ? 'Vet Clinic' :
+                         user.role === 'admin' ? 'System Administrator' : 'Pet Owner'}
                       </Badge>
                     </TableCell>
                     <TableCell>{user.phone || '-'}</TableCell>

@@ -1,11 +1,7 @@
 import { useAuth } from '@/contexts/AuthContext';
-import { 
-  petsStorage, 
-  appointmentsStorage, 
-  usersStorage,
-  vaccinationsStorage,
-  medicalRecordsStorage 
-} from '@/lib/storage';
+import { useEffect, useState } from 'react';
+import type { Pet, Appointment, MedicalRecord, Vaccination, Veterinarian } from '@/types';
+import { appointmentsStorage, medicalRecordsStorage, petsStorage, vaccinationsStorage, veterinariansStorage } from '@/lib/storage';
 import { WelcomeBanner } from '@/components/dashboard/WelcomeBanner';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { QuickActionCard } from '@/components/dashboard/QuickActionCard';
@@ -22,42 +18,117 @@ import {
   Syringe,
   ArrowRight,
   Stethoscope,
-  Plus
+  Plus,
+  Loader2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  const [pets, setPets] = useState<Pet[]>([]);
+  const [rawAppointments, setAppointments] = useState<Appointment[]>([]);
+  const [rawRecords, setAllRecords] = useState<MedicalRecord[]>([]);
+  const [rawVaccinations, setVaccinations] = useState<Vaccination[]>([]);
+  const [veterinarians, setVeterinarians] = useState<Veterinarian[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+
+    try {
+      setPets(petsStorage.getAll());
+      setAppointments(appointmentsStorage.getAll());
+      setAllRecords(medicalRecordsStorage.getAll());
+      setVaccinations(vaccinationsStorage.getAll());
+      setVeterinarians(veterinariansStorage.getAll());
+    } catch (error) {
+      console.error('Dashboard storage load error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user]);
+
   if (!user) return null;
 
-  // Get stats based on role
-  const pets = petsStorage.getAll();
-  const appointments = appointmentsStorage.getAll();
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh]">
+        <Loader2 className="h-10 w-10 animate-spin text-primary opacity-50" />
+        <p className="mt-4 text-muted-foreground">Syncing to MySQL Server...</p>
+      </div>
+    );
+  }
+
+  // Safe fallback guarantees
+  const safePets = Array.isArray(pets) ? pets : [];
+  const safeAppointments = Array.isArray(rawAppointments) ? rawAppointments : [];
+  const safeRecords = Array.isArray(rawRecords) ? rawRecords : [];
+  const safeVaccinations = Array.isArray(rawVaccinations) ? rawVaccinations : [];
+  const safeVeterinarians = Array.isArray(veterinarians) ? veterinarians : [];
+
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayAppointments = appointments.filter(a => a.date === todayStr);
-  const pendingAppointments = appointments.filter(a => a.status === 'pending');
-  const dueVaccinations = vaccinationsStorage.getDue();
+  const nextWeekStr = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  // Role-specific data
-  const getMyPets = () => user.role === 'owner' ? petsStorage.getByOwner(user.id) : pets;
-  const getMyAppointments = () => {
-    if (user.role === 'owner') return appointmentsStorage.getByOwner(user.id);
-    if (user.role === 'veterinarian') return appointmentsStorage.getByVet(user.id);
-    return appointments;
-  };
+  const allPets = safePets;
+  const allAppointments = safeAppointments;
+  const allRecords = safeRecords;
+  const allVaccinations = safeVaccinations;
+  const allVeterinarians = safeVeterinarians;
 
-  const myPets = getMyPets();
-  const myAppointments = getMyAppointments();
+  const myPets = user.role === 'owner'
+    ? allPets.filter(p => String(p.ownerId) === String(user.id))
+    : allPets;
+
+  const clinicVetIds = user.role === 'vet_clinic'
+    ? allVeterinarians.filter(v => String(v.clinicId) === String(user.id)).map(v => v.id)
+    : [];
+
+  const filteredAppointments = user.role === 'owner'
+    ? allAppointments.filter(a => String(a.ownerId) === String(user.id))
+    : user.role === 'vet_clinic'
+      ? allAppointments.filter(a => clinicVetIds.includes(a.veterinarianId))
+      : allAppointments;
+
+  const filteredRecords = user.role === 'owner'
+    ? allRecords.filter(r => myPets.some(p => p.id === r.petId))
+    : user.role === 'vet_clinic'
+      ? allRecords.filter(r => clinicVetIds.includes(r.veterinarianId))
+      : allRecords;
+
+  const dueVaccinations = allVaccinations.filter(v => {
+    if (!v.nextDueDate) return false;
+    if (user.role === 'owner') {
+      return myPets.some(p => p.id === v.petId) && v.nextDueDate <= nextWeekStr;
+    }
+    if (user.role === 'vet_clinic') {
+      return (v.administeredBy === user.id || clinicVetIds.includes(v.administeredBy)) && v.nextDueDate <= nextWeekStr;
+    }
+    return v.nextDueDate <= nextWeekStr;
+  });
+
+  const todayAppointments = filteredAppointments.filter(a => a.date === todayStr);
+  const pendingAppointments = filteredAppointments.filter(a => a.status === 'pending');
+
+  const myAppointments = filteredAppointments;
+
   const upcomingAppointments = myAppointments
     .filter(a => a.date >= todayStr && a.status !== 'cancelled')
-    .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
+    .sort((a, b) => {
+      const aTime = a.time || '';
+      const bTime = b.time || '';
+      return String(a.date).localeCompare(String(b.date)) || String(aTime).localeCompare(String(bTime));
+    })
     .slice(0, 5);
 
-  const recentRecords = medicalRecordsStorage.getAll()
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  const recentRecords = filteredRecords
+    .sort((a, b) => {
+      const aDate = a.recordDate || a.date;
+      const bDate = b.recordDate || b.date;
+      return new Date(bDate).getTime() - new Date(aDate).getTime();
+    })
     .slice(0, 5);
 
   return (
@@ -69,16 +140,14 @@ export default function Dashboard() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Animals"
-          value={user.role === 'owner' ? myPets.length : pets.length}
+          value={myPets.length}
           icon={Heart}
           variant="pink"
           trend="up"
         />
         <StatCard
           title="Today's Appointments"
-          value={user.role === 'owner' 
-            ? myAppointments.filter(a => a.date === todayStr).length 
-            : todayAppointments.length}
+          value={todayAppointments.length}
           icon={Calendar}
           variant="blue"
           trend="neutral"
@@ -106,7 +175,7 @@ export default function Dashboard() {
             <StatCard
               title="Medical Records"
               value={myPets.reduce((acc, pet) => 
-                acc + medicalRecordsStorage.getByPet(pet.id).length, 0)}
+                acc + safeRecords.filter(r => r.petId === pet.id).length, 0)}
               icon={Stethoscope}
               variant="green"
               trend="up"
@@ -114,7 +183,7 @@ export default function Dashboard() {
             <StatCard
               title="Vaccinations"
               value={myPets.reduce((acc, pet) => 
-                acc + vaccinationsStorage.getByPet(pet.id).length, 0)}
+                acc + safeVaccinations.filter(v => v.petId === pet.id).length, 0)}
               icon={Syringe}
               variant="orange"
               trend="up"
@@ -173,8 +242,11 @@ export default function Dashboard() {
             ) : (
               <div className="space-y-3">
                 {upcomingAppointments.map((apt) => {
-                  const pet = petsStorage.getById(apt.petId);
-                  const vet = usersStorage.getById(apt.veterinarianId);
+                  const pet = safePets.find(p => p.id === apt.petId);
+                  const vet = safeVeterinarians.find(v => v.id === apt.veterinarianId);
+                  const aDate = apt.date;
+                  const aTime = apt.time;
+                  
                   return (
                     <div 
                       key={apt.id}
@@ -187,7 +259,7 @@ export default function Dashboard() {
                         <div>
                           <p className="font-medium">{pet?.name || 'Unknown Pet'}</p>
                           <p className="text-sm text-muted-foreground">
-                            {format(new Date(apt.date), 'MMM d')} at {apt.time}
+                            {aDate ? format(parseISO(aDate), 'MMM d') : ''} at {aTime}
                           </p>
                         </div>
                       </div>
@@ -199,7 +271,7 @@ export default function Dashboard() {
                         }>
                           {apt.status}
                         </Badge>
-                        {vet && user.role !== 'veterinarian' && (
+                        {vet && (
                           <p className="text-xs text-muted-foreground mt-1">{vet.name}</p>
                         )}
                       </div>
@@ -229,8 +301,10 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-3">
                   {recentRecords.map((record) => {
-                    const pet = petsStorage.getById(record.petId);
-                    const vet = usersStorage.getById(record.veterinarianId);
+                    const pet = safePets.find(p => p.id === record.petId);
+                    const vet = safeVeterinarians.find(v => v.id === record.veterinarianId);
+                    const rDate = record.recordDate || record.date;
+                    
                     return (
                       <div 
                         key={record.id}
@@ -248,7 +322,7 @@ export default function Dashboard() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm">{format(new Date(record.date), 'MMM d, yyyy')}</p>
+                          <p className="text-sm">{rDate ? format(parseISO(rDate), 'MMM d, yyyy') : ''}</p>
                           <p className="text-xs text-muted-foreground">{vet?.name}</p>
                         </div>
                       </div>

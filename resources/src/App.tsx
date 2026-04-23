@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { TourProvider } from "@/contexts/TourContext";
 
 // Layout
 import { MainLayout } from "@/components/layout/MainLayout";
@@ -44,6 +45,7 @@ function AppRoutes() {
     <Routes>
       {/* Public routes */}
       <Route path="/auth" element={user ? <Navigate to="/dashboard" replace /> : <AuthPage />} />
+      <Route path="/login" element={<Navigate to="/auth" replace />} />
       
       {/* Root redirect */}
       <Route path="/" element={<Navigate to={user ? "/dashboard" : "/auth"} replace />} />
@@ -58,7 +60,7 @@ function AppRoutes() {
         <Route path="/pets" element={<PetsPage />} />
         <Route path="/pets/:id" element={<PetsPage />} />
         <Route path="/owners" element={
-          <ProtectedRoute allowedRoles={['admin', 'veterinarian', 'receptionist']}>
+          <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
             <OwnersPage />
           </ProtectedRoute>
         } />
@@ -75,12 +77,12 @@ function AppRoutes() {
           </ProtectedRoute>
         } />
         <Route path="/settings" element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
             <SettingsPage />
           </ProtectedRoute>
         } />
         <Route path="/reports" element={
-          <ProtectedRoute allowedRoles={['admin', 'veterinarian']}>
+          <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
             <ReportsPage />
           </ProtectedRoute>
         } />
@@ -96,10 +98,12 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <TooltipProvider>
-        <Toaster />
-        <Sonner />
         <BrowserRouter>
-          <AppRoutes />
+          <TourProvider>
+            <Toaster />
+            <Sonner />
+            <AppRoutes />
+          </TourProvider>
         </BrowserRouter>
       </TooltipProvider>
     </AuthProvider>

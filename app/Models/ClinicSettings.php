@@ -16,16 +16,28 @@ class ClinicSettings extends Model
         'email',
         'opening_hours',
         'logo',
+        'vaccine_types',
     ];
 
     protected $casts = [
         'opening_hours' => 'array',
+        'vaccine_types' => 'array',
     ];
 
     public static function getInstance(): self
     {
         return self::firstOrCreate([], [
-            'name' => 'PetPals PH Veterinary Clinic',
+            'name' => 'PetPals PH ',
+            'vaccine_types' => [
+                'Rabies',
+                '5-in-1 (DHPP)',
+                'Bordetella',
+                'Leptospirosis',
+                'Lyme Disease',
+                'Canine Influenza',
+                'FVRCP (Cats)',
+                'FeLV (Cats)',
+            ],
         ]);
     }
 }

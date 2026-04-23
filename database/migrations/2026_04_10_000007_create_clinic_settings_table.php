@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('clinic_settings', function (Blueprint $table) {
             $table->id();
-            $table->string('name')->default('PetPals PH Veterinary Clinic');
+            $table->string('name')->default('PetPals PH ');
             $table->text('address')->nullable();
             $table->string('phone', 20)->nullable();
             $table->string('email')->nullable();

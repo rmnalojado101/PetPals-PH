@@ -36,6 +36,11 @@ class User extends Authenticatable
         return $this->hasMany(Pet::class, 'owner_id');
     }
 
+    public function appointments()
+    {
+        return $this->hasMany(Appointment::class, 'owner_id');
+    }
+
     public function appointmentsAsOwner()
     {
         return $this->hasMany(Appointment::class, 'owner_id');
@@ -56,9 +61,19 @@ class User extends Authenticatable
         return $this->hasMany(Notification::class);
     }
 
+    public function clinicVeterinarians()
+    {
+        return $this->hasMany(Veterinarian::class, 'clinicId');
+    }
+
     public function scopeVeterinarians($query)
     {
         return $query->where('role', 'veterinarian');
+    }
+
+    public function scopeClinics($query)
+    {
+        return $query->where('role', 'vet_clinic');
     }
 
     public function scopeOwners($query)
@@ -109,5 +124,30 @@ class User extends Authenticatable
     public function canCreateMedicalRecords(): bool
     {
         return $this->isVeterinarian();
+    }
+
+    public function isVetClinic(): bool
+    {
+        return $this->role === 'vet_clinic';
+    }
+
+    public function linkedVeterinarian(): ?Veterinarian
+    {
+        if (!$this->isVeterinarian()) {
+            return null;
+        }
+
+        return Veterinarian::query()
+            ->where('email', $this->email)
+            ->orWhere(function ($query) {
+                $query->whereNull('email')
+                    ->where('name', $this->name);
+            })
+            ->first();
+    }
+
+    public function linkedVeterinarianId(): ?int
+    {
+        return $this->linkedVeterinarian()?->id;
     }
 }

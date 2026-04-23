@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { notificationsStorage } from '@/lib/storage';
+import { api } from '@/lib/api';
 import type { Notification } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,54 +16,94 @@ import {
   Stethoscope,
   AlertCircle,
   Check,
-  Trash2
+  Trash2,
+  Loader2
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
+import type { PaginatedResponse } from '@/types';
 
 const NOTIFICATION_ICONS = {
   appointment: Calendar,
   reminder: Bell,
   system: AlertCircle,
   medical: Stethoscope,
-};
+} as const;
+
+function normalizeNotification(notification: Notification): Notification {
+  return {
+    ...notification,
+    read: notification.read ?? notification.isRead ?? false,
+  };
+}
 
 export default function NotificationsPage() {
   const { user } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    if (user) {
-      loadNotifications();
+  const loadNotifications = useCallback(async () => {
+    if (!user) return;
+    setIsLoading(true);
+    try {
+      const data = await api.getNotifications();
+      const list = Array.isArray(data) ? data : (data as PaginatedResponse<Notification>).data;
+      setNotifications(list.map(normalizeNotification));
+    } catch (error) {
+       console.error('Failed to load notifications:', error);
+    } finally {
+       setIsLoading(false);
     }
   }, [user]);
 
-  const loadNotifications = () => {
-    if (!user) return;
-    setNotifications(notificationsStorage.getByUser(user.id));
-  };
-
-  const handleMarkAsRead = (id: string) => {
-    notificationsStorage.markAsRead(id);
-    loadNotifications();
-  };
-
-  const handleMarkAllAsRead = () => {
+  useEffect(() => {
     if (user) {
-      notificationsStorage.markAllAsRead(user.id);
-      loadNotifications();
+      void loadNotifications();
+    }
+  }, [user, loadNotifications]);
+
+  const handleMarkAsRead = async (id: string | number) => {
+    try {
+      await api.markNotificationAsRead(id);
+      setNotifications((current) =>
+        current.map((n) => (n.id.toString() === id.toString() ? { ...n, read: true, isRead: true } : n))
+      );
+    } catch (error) {
+       console.error('Mark as read failed:', error);
     }
   };
 
-  const handleDelete = (id: string) => {
-    notificationsStorage.delete(id);
-    loadNotifications();
+  const handleMarkAllAsRead = async () => {
+    try {
+      await api.markAllNotificationsAsRead();
+      setNotifications((current) => current.map((n) => ({ ...n, read: true, isRead: true })));
+    } catch (error) {
+       console.error('Mark all as read failed:', error);
+    }
+  };
+
+  const handleDelete = async (id: string | number) => {
+    try {
+      await api.deleteNotification(id);
+      setNotifications((current) => current.filter((n) => n.id.toString() !== id.toString()));
+    } catch (error) {
+       console.error('Delete notification failed:', error);
+    }
   };
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
+  if (isLoading && notifications.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh]">
+        <Loader2 className="h-10 w-10 animate-spin text-primary opacity-50" />
+        <p className="mt-4 text-muted-foreground">Loading Notifications...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in" data-tour="notifications-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Notifications</h1>
@@ -88,14 +128,18 @@ export default function NotificationsPage() {
             <Bell className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
             <h3 className="text-lg font-semibold mb-2">No notifications</h3>
             <p className="text-muted-foreground">
-              You're all caught up! New notifications will appear here.
+              You're all caught up! New notifications will appear here and be stored in MySQL.
             </p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
           {notifications.map((notification) => {
-            const Icon = NOTIFICATION_ICONS[notification.type] || Bell;
+            const type = notification.type as keyof typeof NOTIFICATION_ICONS;
+            const Icon = NOTIFICATION_ICONS[type] || Bell;
+            const createdAt = notification.createdAt;
+            const date = createdAt ? parseISO(createdAt) : new Date();
+
             return (
               <Card 
                 key={notification.id}
@@ -123,7 +167,7 @@ export default function NotificationsPage() {
                             {notification.message}
                           </p>
                           <p className="text-xs text-muted-foreground mt-2">
-                            {format(new Date(notification.createdAt), 'MMM d, yyyy h:mm a')}
+                            {isValid(date) ? format(date, 'MMM d, yyyy h:mm a') : 'Just now'}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">

@@ -14,7 +14,7 @@ return new class extends Migration
             $table->string('name');
             $table->date('date_administered');
             $table->date('next_due_date')->nullable();
-            $table->foreignId('administered_by')->constrained('users')->onDelete('cascade');
+            $table->foreignId('administered_by')->constrained('veterinarians')->onDelete('cascade');
             $table->string('batch_number', 100)->nullable();
             $table->text('notes')->nullable();
             $table->timestamps();

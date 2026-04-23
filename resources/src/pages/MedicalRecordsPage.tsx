@@ -4,72 +4,48 @@ import {
   medicalRecordsStorage, 
   petsStorage, 
   usersStorage,
-  appointmentsStorage 
+  appointmentsStorage,
+  veterinariansStorage,
+  notificationsStorage
 } from '@/lib/storage';
-import type { MedicalRecord } from '@/types';
+import type { MedicalRecord, User, Pet } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Card,
-  CardContent,
-} from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { 
-  Plus, 
-  Search,  
-  Calendar as CalendarIcon,
-  Eye,
-  Edit,
-  Trash2,
-  Stethoscope,
-  FileText,
-  Download
-} from 'lucide-react';
+import { Plus, Search, Calendar as CalendarIcon, Eye, Edit, Trash2, Stethoscope, Download, ArrowLeft, Users, Heart } from 'lucide-react';
 import { format } from 'date-fns';
-import { cn } from '@/lib/utils';
 
 export default function MedicalRecordsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   
+  // Drill-down states
+  const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
+  const [selectedPet, setSelectedPet] = useState<Pet | null>(null);
+
+  // Data states
+  const [owners, setOwners] = useState<User[]>([]);
+  const [pets, setPets] = useState<Pet[]>([]);
   const [records, setRecords] = useState<MedicalRecord[]>([]);
+
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Form states
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<MedicalRecord | null>(null);
   const [viewingRecord, setViewingRecord] = useState<MedicalRecord | null>(null);
   
-  // Form state
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [formData, setFormData] = useState({
-    petId: '',
     diagnosis: '',
     treatment: '',
     prescription: '',
@@ -79,39 +55,75 @@ export default function MedicalRecordsPage() {
     temperature: '',
     followUpDate: '',
   });
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   useEffect(() => {
-    loadRecords();
-  }, [user]);
-
-  const loadRecords = () => {
     if (!user) return;
     
-    let data: MedicalRecord[];
-    if (user.role === 'owner') {
-      const myPets = petsStorage.getByOwner(user.id);
-      data = myPets.flatMap(pet => medicalRecordsStorage.getByPet(pet.id));
-    } else if (user.role === 'veterinarian') {
-      data = medicalRecordsStorage.getByVet(user.id);
-    } else {
-      data = medicalRecordsStorage.getAll();
+    // Auto-skip Level 1 for 'owner' role
+    if (user.role === 'owner' && !selectedOwnerId) {
+      setSelectedOwnerId(user.id);
+      return;
     }
+
+    if (!selectedOwnerId) {
+      loadOwners();
+    } else if (selectedOwnerId && !selectedPet) {
+      loadPetsForOwner(selectedOwnerId);
+    } else if (selectedPet) {
+      loadRecordsForPet(selectedPet.id);
+    }
+  }, [user, selectedOwnerId, selectedPet]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [selectedOwnerId, selectedPet, searchTerm]);
+
+  const loadOwners = () => {
+    if (!user) return;
+    const relevantOwnerIds = new Set<string>();
     
+    if (user.role === 'admin') {
+      usersStorage.getByRole('owner').forEach(o => relevantOwnerIds.add(o.id));
+    } else if (user.role === 'veterinarian') {
+      appointmentsStorage.getByVet(user.id).forEach(a => relevantOwnerIds.add(a.ownerId));
+    } else if (user.role === 'vet_clinic') {
+      const clinicVets = veterinariansStorage.getByClinic(user.id).map(v => v.id);
+      appointmentsStorage.getAll().forEach(a => {
+        if (clinicVets.includes(a.veterinarianId)) relevantOwnerIds.add(a.ownerId);
+      });
+    }
+
+    const fetchedOwners = usersStorage.getAll().filter(u => relevantOwnerIds.has(u.id));
+    setOwners(fetchedOwners);
+  };
+
+  const loadPetsForOwner = (ownerId: string) => {
+    setPets(petsStorage.getByOwner(ownerId));
+  };
+
+  const loadRecordsForPet = (petId: string) => {
+    const data = medicalRecordsStorage.getByPet(petId);
     data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     setRecords(data);
   };
 
+  // UI Handlers
+  const handleBack = () => {
+    setSearchTerm('');
+    if (selectedPet) {
+      setSelectedPet(null);
+    } else if (selectedOwnerId) {
+      if (user?.role === 'owner') return; // Owners can't go back further than pets list
+      setSelectedOwnerId(null);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
-      petId: '',
-      diagnosis: '',
-      treatment: '',
-      prescription: '',
-      labResults: '',
-      notes: '',
-      weight: '',
-      temperature: '',
-      followUpDate: '',
+      diagnosis: '', treatment: '', prescription: '', labResults: '',
+      notes: '', weight: '', temperature: '', followUpDate: '',
     });
     setSelectedDate(new Date());
     setEditingRecord(null);
@@ -119,18 +131,13 @@ export default function MedicalRecordsPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!formData.petId || !formData.diagnosis || !formData.treatment) {
-      toast({
-        title: 'Missing Information',
-        description: 'Please fill in all required fields.',
-        variant: 'destructive',
-      });
+    if (!selectedPet || !formData.diagnosis || !formData.treatment) {
+      toast({ title: 'Missing Information', description: 'Please fill in required fields.', variant: 'destructive' });
       return;
     }
 
     const recordData = {
-      petId: formData.petId,
+      petId: selectedPet.id,
       veterinarianId: user?.id || '',
       date: format(selectedDate, 'yyyy-MM-dd'),
       diagnosis: formData.diagnosis,
@@ -145,19 +152,24 @@ export default function MedicalRecordsPage() {
 
     if (editingRecord) {
       medicalRecordsStorage.update(editingRecord.id, recordData);
-      toast({
-        title: 'Record Updated',
-        description: 'Medical record has been updated.',
-      });
+      toast({ title: 'Record Updated', description: 'Medical record has been updated.' });
     } else {
       medicalRecordsStorage.create(recordData);
-      toast({
-        title: 'Record Created',
-        description: 'Medical record has been saved.',
-      });
+      
+      const pet = petsStorage.getById(recordData.petId);
+      if (pet?.ownerId) {
+         notificationsStorage.create({
+             userId: pet.ownerId,
+             title: 'New Medical Record',
+             message: `A new consultation record was added to ${pet.name}'s medical history.`,
+             type: 'medical',
+         });
+      }
+
+      toast({ title: 'Record Created', description: 'Medical record has been saved for ' + selectedPet.name });
     }
 
-    loadRecords();
+    loadRecordsForPet(selectedPet.id);
     setIsDialogOpen(false);
     resetForm();
   };
@@ -165,15 +177,9 @@ export default function MedicalRecordsPage() {
   const handleEdit = (record: MedicalRecord) => {
     setEditingRecord(record);
     setFormData({
-      petId: record.petId,
-      diagnosis: record.diagnosis,
-      treatment: record.treatment,
-      prescription: record.prescription || '',
-      labResults: record.labResults || '',
-      notes: record.notes || '',
-      weight: record.weight?.toString() || '',
-      temperature: record.temperature?.toString() || '',
-      followUpDate: record.followUpDate || '',
+      diagnosis: record.diagnosis, treatment: record.treatment, prescription: record.prescription || '',
+      labResults: record.labResults || '', notes: record.notes || '', weight: record.weight?.toString() || '',
+      temperature: record.temperature?.toString() || '', followUpDate: record.followUpDate || '',
     });
     setSelectedDate(new Date(record.date));
     setIsDialogOpen(true);
@@ -182,12 +188,8 @@ export default function MedicalRecordsPage() {
   const handleDelete = (record: MedicalRecord) => {
     if (confirm('Are you sure you want to delete this medical record?')) {
       medicalRecordsStorage.delete(record.id);
-      toast({
-        title: 'Record Deleted',
-        description: 'Medical record has been removed.',
-        variant: 'destructive',
-      });
-      loadRecords();
+      toast({ title: 'Record Deleted', variant: 'destructive' });
+      if (selectedPet) loadRecordsForPet(selectedPet.id);
     }
   };
 
@@ -216,33 +218,14 @@ export default function MedicalRecordsPage() {
             <p>Veterinary Medical Record</p>
           </div>
           <div class="grid">
-            <div class="section">
-              <p class="label">Patient:</p>
-              <p>${pet?.name} (${pet?.species} - ${pet?.breed})</p>
-            </div>
-            <div class="section">
-              <p class="label">Owner:</p>
-              <p>${owner?.name}</p>
-            </div>
-            <div class="section">
-              <p class="label">Date:</p>
-              <p>${format(new Date(record.date), 'MMMM d, yyyy')}</p>
-            </div>
-            <div class="section">
-              <p class="label">Attending Veterinarian:</p>
-              <p>${vet?.name}</p>
-            </div>
+            <div class="section"><p class="label">Patient:</p><p>${pet?.name} (${pet?.species})</p></div>
+            <div class="section"><p class="label">Owner:</p><p>${owner?.name}</p></div>
+            <div class="section"><p class="label">Date:</p><p>${format(new Date(record.date), 'MMMM d, yyyy')}</p></div>
+            <div class="section"><p class="label">Attending Veterinarian:</p><p>${vet?.name}</p></div>
           </div>
-          <div class="section">
-            <p class="label">Diagnosis:</p>
-            <p>${record.diagnosis}</p>
-          </div>
-          <div class="section">
-            <p class="label">Treatment:</p>
-            <p>${record.treatment}</p>
-          </div>
+          <div class="section"><p class="label">Diagnosis:</p><p>${record.diagnosis}</p></div>
+          <div class="section"><p class="label">Treatment:</p><p>${record.treatment}</p></div>
           ${record.prescription ? `<div class="section"><p class="label">Prescription:</p><p>${record.prescription}</p></div>` : ''}
-          ${record.labResults ? `<div class="section"><p class="label">Lab Results:</p><p>${record.labResults}</p></div>` : ''}
           ${record.notes ? `<div class="section"><p class="label">Notes:</p><p>${record.notes}</p></div>` : ''}
           <div class="grid">
             ${record.weight ? `<div class="section"><p class="label">Weight:</p><p>${record.weight} kg</p></div>` : ''}
@@ -252,193 +235,321 @@ export default function MedicalRecordsPage() {
         </body>
       </html>
     `;
-    
     const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(content);
-      printWindow.document.close();
-      printWindow.print();
-    }
+    if (printWindow) { printWindow.document.write(content); printWindow.document.close(); printWindow.print(); }
   };
 
-  const pets = user?.role === 'owner' 
-    ? petsStorage.getByOwner(user.id)
-    : petsStorage.getAll();
+  const getBreadcrumbs = () => {
+    let trace = "Patient Directory";
+    if (selectedOwnerId) {
+      const o = usersStorage.getById(selectedOwnerId);
+      trace = `Patient Directory > ${o?.name}'s Pets`;
+      if (selectedPet) {
+        trace += ` > ${selectedPet.name}'s Medical History`;
+      }
+    }
+    return trace;
+  };
 
-  const filteredRecords = records.filter(record => {
-    const pet = petsStorage.getById(record.petId);
-    const matchesSearch = 
-      pet?.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      record.diagnosis.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      record.treatment.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesSearch;
-  });
+  const canEdit = user?.role === 'veterinarian' || user?.role === 'admin' || user?.role === 'vet_clinic';
 
-  const canEdit = user?.role === 'veterinarian' || user?.role === 'admin';
+  // --- RENDER VIEWS ---
+
+  // LEVEL 1: Owners List
+  const renderOwnersView = () => {
+    const filteredOwners = owners.filter(o => 
+      o.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      o.email.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    const totalOwners = filteredOwners.length;
+    const totalPages = Math.max(1, Math.ceil(totalOwners / PAGE_SIZE));
+    const ownersToShow = filteredOwners.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+    return (
+      <>
+        <Table>
+        <TableHeader><TableRow>
+          <TableHead>Owner Name</TableHead>
+          <TableHead>Contact Email</TableHead>
+          <TableHead>Phone</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {ownersToShow.map((owner) => (
+            <TableRow key={owner.id}>
+              <TableCell className="font-medium">{owner.name}</TableCell>
+              <TableCell>{owner.email}</TableCell>
+              <TableCell>{owner.phone || 'N/A'}</TableCell>
+              <TableCell className="text-right">
+                <Button variant="outline" size="sm" onClick={() => setSelectedOwnerId(owner.id)}>
+                  View Pets <Heart className="ml-2 h-3 w-3" />
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {totalPages > 1 && (
+        <Pagination className="mt-4">
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                onClick={(e) => {
+                  e.preventDefault();
+                  setPage((prev) => Math.max(prev - 1, 1));
+                }}
+              />
+            </PaginationItem>
+            {Array.from({ length: totalPages }, (_, index) => (
+              <PaginationItem key={index}>
+                <PaginationLink
+                  href="#"
+                  isActive={page === index + 1}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setPage(index + 1);
+                  }}
+                >
+                  {index + 1}
+                </PaginationLink>
+              </PaginationItem>
+            ))}
+            <PaginationItem>
+              <PaginationNext
+                onClick={(e) => {
+                  e.preventDefault();
+                  setPage((prev) => Math.min(prev + 1, totalPages));
+                }}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
+    </>
+  );
+};
+
+  // LEVEL 2: Pets List
+  const renderPetsView = () => {
+    const filteredPets = pets.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    const totalPets = filteredPets.length;
+    const totalPages = Math.max(1, Math.ceil(totalPets / PAGE_SIZE));
+    const petsToShow = filteredPets.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+    return (
+      <>
+        <Table>
+        <TableHeader><TableRow>
+          <TableHead>Pet Name</TableHead>
+          <TableHead>Species & Breed</TableHead>
+          <TableHead>Age</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {petsToShow.map((pet) => (
+            <TableRow key={pet.id}>
+              <TableCell className="font-medium">{pet.name}</TableCell>
+              <TableCell className="capitalize">{pet.species} - {pet.breed}</TableCell>
+              <TableCell>{pet.age} years</TableCell>
+              <TableCell className="text-right">
+                <Button variant="default" size="sm" onClick={() => setSelectedPet(pet)}>
+                  Medical History <Stethoscope className="ml-2 h-3 w-3" />
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+          {petsToShow.length === 0 && (
+            <TableRow><TableCell colSpan={4} className="text-center py-6 text-muted-foreground">No pets formally registered to this owner yet.</TableCell></TableRow>
+          )}
+        </TableBody>
+      </Table>
+      {totalPages > 1 && (
+        <Pagination className="mt-4">
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                onClick={(e) => {
+                  e.preventDefault();
+                  setPage((prev) => Math.max(prev - 1, 1));
+                }}
+              />
+            </PaginationItem>
+            {Array.from({ length: totalPages }, (_, index) => (
+              <PaginationItem key={index}>
+                <PaginationLink
+                  href="#"
+                  isActive={page === index + 1}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setPage(index + 1);
+                  }}
+                >
+                  {index + 1}
+                </PaginationLink>
+              </PaginationItem>
+            ))}
+            <PaginationItem>
+              <PaginationNext
+                onClick={(e) => {
+                  e.preventDefault();
+                  setPage((prev) => Math.min(prev + 1, totalPages));
+                }}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
+    </>
+  );
+};
+
+  // LEVEL 3: Medical Records List
+  const renderRecordsView = () => {
+    const filteredRecords = records.filter(r => 
+      r.diagnosis.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.treatment.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    const totalRecords = filteredRecords.length;
+    const totalPages = Math.max(1, Math.ceil(totalRecords / PAGE_SIZE));
+    const recordsToShow = filteredRecords.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+    return (
+      <>
+        <Table>
+        <TableHeader><TableRow>
+          <TableHead>Date</TableHead>
+          <TableHead>Diagnosis</TableHead>
+          <TableHead>Treatment</TableHead>
+          <TableHead>Veterinarian</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {recordsToShow.map((record) => {
+            const vet = usersStorage.getById(record.veterinarianId);
+            return (
+              <TableRow key={record.id}>
+                <TableCell className="font-medium">{format(new Date(record.date), 'MMM d, yyyy')}</TableCell>
+                <TableCell><p className="line-clamp-2 max-w-xs">{record.diagnosis}</p></TableCell>
+                <TableCell><p className="line-clamp-2 max-w-xs">{record.treatment}</p></TableCell>
+                <TableCell>{vet?.name || 'Unknown Vet'}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="icon" onClick={() => setViewingRecord(record)}><Eye className="h-4 w-4" /></Button>
+                    <Button variant="ghost" size="icon" onClick={() => handleExportPDF(record)}><Download className="h-4 w-4" /></Button>
+                    {canEdit && (
+                      <>
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(record)}><Edit className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(record)} className="text-destructive hover:text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                      </>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+          {recordsToShow.length === 0 && (
+            <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground">No medical records exist for this pet yet.</TableCell></TableRow>
+          )}
+        </TableBody>
+      </Table>
+      {totalPages > 1 && (
+        <Pagination className="mt-4">
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                onClick={(e) => {
+                  e.preventDefault();
+                  setPage((prev) => Math.max(prev - 1, 1));
+                }}
+              />
+            </PaginationItem>
+            {Array.from({ length: totalPages }, (_, index) => (
+              <PaginationItem key={index}>
+                <PaginationLink
+                  href="#"
+                  isActive={page === index + 1}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setPage(index + 1);
+                  }}
+                >
+                  {index + 1}
+                </PaginationLink>
+              </PaginationItem>
+            ))}
+            <PaginationItem>
+              <PaginationNext
+                onClick={(e) => {
+                  e.preventDefault();
+                  setPage((prev) => Math.min(prev + 1, totalPages));
+                }}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      )}
+    </>
+  );
+};
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Medical Records</h1>
-          <p className="text-muted-foreground">View and manage consultation records</p>
+          <div className="flex items-center gap-2 mb-2">
+            {(selectedOwnerId || selectedPet) && user?.role !== 'owner' && (
+              <Button variant="outline" size="sm" onClick={handleBack} className="h-8 shadow-sm">
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back
+              </Button>
+            )}
+            <Badge variant="secondary" className="px-3 py-1 font-mono text-xs text-muted-foreground bg-muted">
+              {getBreadcrumbs()}
+            </Badge>
+          </div>
+          <h1 className="text-2xl font-bold">
+            {!selectedOwnerId ? "Patient Directory" : !selectedPet ? "Owner's Pets" : `${selectedPet.name}'s Medical History`}
+          </h1>
+          <p className="text-muted-foreground">
+            {!selectedOwnerId ? "Select an owner to view their pets" : !selectedPet ? "Select a pet to view their consultation records" : "View and manage consultation records"}
+          </p>
         </div>
         
-        {canEdit && (
-          <Dialog open={isDialogOpen} onOpenChange={(open) => {
-            setIsDialogOpen(open);
-            if (!open) resetForm();
-          }}>
+        {/* ADD RECORD Modal (Only visible on level 3) */}
+        {canEdit && selectedPet && (
+          <Dialog open={isDialogOpen} onOpenChange={(open) => { setIsDialogOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Record
-              </Button>
+              <Button><Plus className="mr-2 h-4 w-4" /> Add Record</Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>{editingRecord ? 'Edit Record' : 'New Medical Record'}</DialogTitle>
-                <DialogDescription>
-                  Enter the consultation details
-                </DialogDescription>
+                <DialogTitle>{editingRecord ? 'Edit Record' : `New Medical Record for ${selectedPet.name}`}</DialogTitle>
+                <DialogDescription>Enter the consultation details below</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleSubmit}>
                 <div className="grid gap-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Date *</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" className="w-full justify-start text-left font-normal"><CalendarIcon className="mr-2 h-4 w-4" />{format(selectedDate, 'PPP')}</Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar mode="single" selected={selectedDate} onSelect={(date) => date && setSelectedDate(date)} initialFocus />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Pet *</Label>
-                      <Select
-                        value={formData.petId}
-                        onValueChange={(value) => setFormData({ ...formData, petId: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select pet" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {pets.map((pet) => (
-                            <SelectItem key={pet.id} value={pet.id}>
-                              {pet.name} ({pet.species})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Date *</Label>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className="w-full justify-start text-left font-normal"
-                          >
-                            <CalendarIcon className="mr-2 h-4 w-4" />
-                            {format(selectedDate, 'PPP')}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={selectedDate}
-                            onSelect={(date) => date && setSelectedDate(date)}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    </div>
+                    <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.1" value={formData.weight} onChange={(e) => setFormData({ ...formData, weight: e.target.value })} /></div>
+                    <div className="space-y-2"><Label>Temperature (°C)</Label><Input type="number" step="0.1" value={formData.temperature} onChange={(e) => setFormData({ ...formData, temperature: e.target.value })} /></div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Weight (kg)</Label>
-                      <Input
-                        type="number"
-                        step="0.1"
-                        value={formData.weight}
-                        onChange={(e) => setFormData({ ...formData, weight: e.target.value })}
-                        placeholder="e.g., 5.5"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Temperature (°C)</Label>
-                      <Input
-                        type="number"
-                        step="0.1"
-                        value={formData.temperature}
-                        onChange={(e) => setFormData({ ...formData, temperature: e.target.value })}
-                        placeholder="e.g., 38.5"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Diagnosis *</Label>
-                    <Textarea
-                      value={formData.diagnosis}
-                      onChange={(e) => setFormData({ ...formData, diagnosis: e.target.value })}
-                      placeholder="Enter diagnosis..."
-                      rows={2}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Treatment *</Label>
-                    <Textarea
-                      value={formData.treatment}
-                      onChange={(e) => setFormData({ ...formData, treatment: e.target.value })}
-                      placeholder="Enter treatment plan..."
-                      rows={2}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Prescription</Label>
-                    <Textarea
-                      value={formData.prescription}
-                      onChange={(e) => setFormData({ ...formData, prescription: e.target.value })}
-                      placeholder="Medications and dosage..."
-                      rows={2}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Lab Results</Label>
-                    <Textarea
-                      value={formData.labResults}
-                      onChange={(e) => setFormData({ ...formData, labResults: e.target.value })}
-                      placeholder="Any lab test results..."
-                      rows={2}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Additional Notes</Label>
-                    <Textarea
-                      value={formData.notes}
-                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                      placeholder="Any other observations..."
-                      rows={2}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Follow-up Date</Label>
-                    <Input
-                      type="date"
-                      value={formData.followUpDate}
-                      onChange={(e) => setFormData({ ...formData, followUpDate: e.target.value })}
-                    />
-                  </div>
+                  <div className="space-y-2"><Label>Diagnosis *</Label><Textarea value={formData.diagnosis} onChange={(e) => setFormData({ ...formData, diagnosis: e.target.value })} rows={2} required /></div>
+                  <div className="space-y-2"><Label>Treatment *</Label><Textarea value={formData.treatment} onChange={(e) => setFormData({ ...formData, treatment: e.target.value })} rows={2} required /></div>
+                  <div className="space-y-2"><Label>Prescription</Label><Textarea value={formData.prescription} onChange={(e) => setFormData({ ...formData, prescription: e.target.value })} rows={2} /></div>
+                  <div className="space-y-2"><Label>Additional Notes</Label><Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} /></div>
                 </div>
                 <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit">
-                    {editingRecord ? 'Update Record' : 'Save Record'}
-                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
+                  <Button type="submit">{editingRecord ? 'Update Record' : 'Save Record'}</Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -446,106 +557,12 @@ export default function MedicalRecordsPage() {
         )}
       </div>
 
-      {/* View Record Dialog */}
-      <Dialog open={!!viewingRecord} onOpenChange={() => setViewingRecord(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Medical Record Details</DialogTitle>
-          </DialogHeader>
-          {viewingRecord && (() => {
-            const pet = petsStorage.getById(viewingRecord.petId);
-            const owner = pet ? usersStorage.getById(pet.ownerId) : null;
-            const vet = usersStorage.getById(viewingRecord.veterinarianId);
-            return (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground">Date</Label>
-                    <p className="font-medium">{format(new Date(viewingRecord.date), 'MMMM d, yyyy')}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Veterinarian</Label>
-                    <p className="font-medium">{vet?.name}</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground">Pet</Label>
-                    <p className="font-medium">{pet?.name}</p>
-                    <p className="text-sm text-muted-foreground capitalize">{pet?.species} - {pet?.breed}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Owner</Label>
-                    <p className="font-medium">{owner?.name}</p>
-                  </div>
-                </div>
-                {(viewingRecord.weight || viewingRecord.temperature) && (
-                  <div className="grid grid-cols-2 gap-4">
-                    {viewingRecord.weight && (
-                      <div>
-                        <Label className="text-muted-foreground">Weight</Label>
-                        <p>{viewingRecord.weight} kg</p>
-                      </div>
-                    )}
-                    {viewingRecord.temperature && (
-                      <div>
-                        <Label className="text-muted-foreground">Temperature</Label>
-                        <p>{viewingRecord.temperature}°C</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div>
-                  <Label className="text-muted-foreground">Diagnosis</Label>
-                  <p>{viewingRecord.diagnosis}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Treatment</Label>
-                  <p>{viewingRecord.treatment}</p>
-                </div>
-                {viewingRecord.prescription && (
-                  <div>
-                    <Label className="text-muted-foreground">Prescription</Label>
-                    <p>{viewingRecord.prescription}</p>
-                  </div>
-                )}
-                {viewingRecord.labResults && (
-                  <div>
-                    <Label className="text-muted-foreground">Lab Results</Label>
-                    <p>{viewingRecord.labResults}</p>
-                  </div>
-                )}
-                {viewingRecord.notes && (
-                  <div>
-                    <Label className="text-muted-foreground">Notes</Label>
-                    <p>{viewingRecord.notes}</p>
-                  </div>
-                )}
-                {viewingRecord.followUpDate && (
-                  <div>
-                    <Label className="text-muted-foreground">Follow-up Date</Label>
-                    <p>{viewingRecord.followUpDate}</p>
-                  </div>
-                )}
-                <div className="flex justify-end">
-                  <Button variant="outline" onClick={() => handleExportPDF(viewingRecord)}>
-                    <Download className="mr-2 h-4 w-4" />
-                    Print / Export
-                  </Button>
-                </div>
-              </div>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
-
-      {/* Search */}
       <Card>
         <CardContent className="pt-6">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search by pet name, diagnosis, or treatment..."
+              placeholder={!selectedOwnerId ? "Search owners..." : !selectedPet ? "Search pets..." : "Search diagnosis or treatment..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
@@ -554,96 +571,36 @@ export default function MedicalRecordsPage() {
         </CardContent>
       </Card>
 
-      {/* Records Table */}
       <Card>
         <CardContent className="p-0">
-          {filteredRecords.length === 0 ? (
-            <div className="py-16 text-center">
-              <Stethoscope className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-              <h3 className="text-lg font-semibold mb-2">No medical records found</h3>
-              <p className="text-muted-foreground">
-                {searchTerm ? 'Try adjusting your search' : 'No records have been created yet'}
-              </p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Pet</TableHead>
-                  <TableHead>Diagnosis</TableHead>
-                  <TableHead>Treatment</TableHead>
-                  <TableHead>Veterinarian</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredRecords.map((record) => {
-                  const pet = petsStorage.getById(record.petId);
-                  const vet = usersStorage.getById(record.veterinarianId);
-                  return (
-                    <TableRow key={record.id}>
-                      <TableCell>
-                        <p className="font-medium">{format(new Date(record.date), 'MMM d, yyyy')}</p>
-                      </TableCell>
-                      <TableCell>
-                        <p className="font-medium">{pet?.name}</p>
-                        <p className="text-sm text-muted-foreground capitalize">{pet?.species}</p>
-                      </TableCell>
-                      <TableCell>
-                        <p className="line-clamp-2 max-w-48">{record.diagnosis}</p>
-                      </TableCell>
-                      <TableCell>
-                        <p className="line-clamp-2 max-w-48">{record.treatment}</p>
-                      </TableCell>
-                      <TableCell>
-                        <p>{vet?.name}</p>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setViewingRecord(record)}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleExportPDF(record)}
-                          >
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          {canEdit && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleEdit(record)}
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDelete(record)}
-                                className="text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
+           {!selectedOwnerId ? renderOwnersView() : !selectedPet ? renderPetsView() : renderRecordsView()}
         </CardContent>
       </Card>
+
+      {/* View Record Read-Only Modal */}
+      <Dialog open={!!viewingRecord} onOpenChange={() => setViewingRecord(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>Medical Record Details</DialogTitle></DialogHeader>
+          {viewingRecord && (() => {
+            const pet = petsStorage.getById(viewingRecord.petId);
+            const vet = usersStorage.getById(viewingRecord.veterinarianId);
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div><Label className="text-muted-foreground">Date</Label><p className="font-medium">{format(new Date(viewingRecord.date), 'MMMM d, yyyy')}</p></div>
+                  <div><Label className="text-muted-foreground">Veterinarian</Label><p className="font-medium">{vet?.name}</p></div>
+                </div>
+                <div><Label className="text-muted-foreground">Diagnosis</Label><p>{viewingRecord.diagnosis}</p></div>
+                <div><Label className="text-muted-foreground">Treatment</Label><p>{viewingRecord.treatment}</p></div>
+                {viewingRecord.prescription && <div><Label className="text-muted-foreground">Prescription</Label><p>{viewingRecord.prescription}</p></div>}
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={() => handleExportPDF(viewingRecord)}><Download className="mr-2 h-4 w-4" /> Print / Export</Button>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

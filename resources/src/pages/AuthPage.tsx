@@ -58,10 +58,10 @@ export default function AuthPage() {
     e.preventDefault();
     setIsLoading(true);
 
-    if (registerPassword.length < 6) {
+    if (registerPassword.length < 8) {
       toast({
         title: 'Invalid Password',
-        description: 'Password must be at least 6 characters long.',
+        description: 'Password must be at least 8 characters long.',
         variant: 'destructive',
       });
       setIsLoading(false);
@@ -167,9 +167,8 @@ export default function AuthPage() {
                   <div className="rounded-lg bg-muted p-3 text-sm">
                     <p className="font-medium mb-2">Demo Accounts:</p>
                     <ul className="space-y-1 text-muted-foreground text-xs">
-                      <li>Admin: admin@petpalsph.com / admin123</li>
-                      <li>Vet: drcruz@petpalsph.com / vet123</li>
-                      <li>Reception: reception@petpalsph.com / reception123</li>
+                      <li>System Admin: admin@petpalsph.com / admin123</li>
+                      <li>Vet Clinic: clinic@petpalsph.com / clinic123</li>
                       <li>Owner: owner@petpalsph.com / owner123</li>
                     </ul>
                   </div>
@@ -202,8 +201,8 @@ export default function AuthPage() {
                         <Label htmlFor="r-owner" className="font-normal cursor-pointer">Pet Owner</Label>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="veterinarian" id="r-vet" />
-                        <Label htmlFor="r-vet" className="font-normal cursor-pointer">Doctor/Vet Owner</Label>
+                        <RadioGroupItem value="vet_clinic" id="r-clinic" />
+                        <Label htmlFor="r-clinic" className="font-normal cursor-pointer">Vet Clinic</Label>
                       </div>
                     </RadioGroup>
                   </div>
@@ -247,12 +246,12 @@ export default function AuthPage() {
                       <Input
                         id="register-password"
                         type={showPassword ? 'text' : 'password'}
-                        placeholder="At least 6 characters"
+                        placeholder="At least 8 characters"
                         value={registerPassword}
                         onChange={(e) => setRegisterPassword(e.target.value)}
                         className="pl-10 pr-10"
                         required
-                        minLength={6}
+                        minLength={8}
                       />
                       <button
                         type="button"

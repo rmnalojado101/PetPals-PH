@@ -1,15 +1,31 @@
-export type UserRole = 'admin' | 'veterinarian' | 'receptionist' | 'owner';
+export type UserRole = 'admin' | 'vet_clinic' | 'owner' | 'veterinarian';
 
 export interface User {
   id: string;
   email: string;
-  password: string;
+  password?: string;
   name: string;
   role: UserRole;
   phone?: string;
   address?: string;
   avatar?: string;
-  createdAt: string;
+  pets?: Pet[];
+  createdAt?: string;
+}
+
+export interface Veterinarian {
+  id: string;
+  clinicId?: string;
+  clinic?: User;
+  name: string;
+  email: string;
+  phone?: string;
+  specialty?: string;
+  background?: string;
+  avatar?: string;
+  appointmentsCount?: number;
+  recordsCount?: number;
+  createdAt?: string;
 }
 
 export interface Pet {
@@ -26,6 +42,7 @@ export interface Pet {
   allergies: string[];
   medicalNotes?: string;
   photo?: string;
+  owner?: User;
   createdAt: string;
 }
 
@@ -35,9 +52,23 @@ export interface Vaccination {
   name: string;
   dateAdministered: string;
   nextDueDate?: string;
-  administeredBy: string;
+  administeredBy?: string;
   batchNumber?: string;
   notes?: string;
+  pet?: Pet;
+  administeredByUser?: User | Veterinarian;
+}
+
+export interface VaccineInventory {
+  id: string;
+  clinicId: string;
+  name: string;
+  stock: number;
+  batchNumber?: string;
+  origin?: string;
+  expirationDate?: string;
+  description?: string;
+  lastUpdated: string;
 }
 
 export type AppointmentStatus = 'pending' | 'approved' | 'completed' | 'cancelled';
@@ -47,13 +78,26 @@ export interface Appointment {
   petId: string;
   ownerId: string;
   veterinarianId: string;
-  date: string;
-  time: string;
+  date?: string;
+  time?: string;
+  appointmentDate?: string;
+  appointmentTime?: string;
   reason: string;
   status: AppointmentStatus;
   notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  pet?: Pet;
+  owner?: User;
+  veterinarian?: User | Veterinarian;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AppointmentAvailability {
+  id: string;
+  veterinarianId: string;
+  appointmentDate?: string;
+  appointmentTime?: string;
+  status: AppointmentStatus;
 }
 
 export interface MedicalRecord {
@@ -61,7 +105,8 @@ export interface MedicalRecord {
   petId: string;
   appointmentId?: string;
   veterinarianId: string;
-  date: string;
+  date?: string;
+  recordDate?: string;
   diagnosis: string;
   treatment: string;
   prescription?: string;
@@ -70,7 +115,10 @@ export interface MedicalRecord {
   weight?: number;
   temperature?: number;
   followUpDate?: string;
-  createdAt: string;
+  pet?: Pet;
+  owner?: User;
+  veterinarian?: User | Veterinarian;
+  createdAt?: string;
 }
 
 export interface Notification {
@@ -79,7 +127,8 @@ export interface Notification {
   title: string;
   message: string;
   type: 'appointment' | 'reminder' | 'system' | 'medical';
-  read: boolean;
+  read?: boolean;
+  isRead?: boolean;
   createdAt: string;
 }
 
@@ -95,4 +144,47 @@ export interface ClinicSettings {
     isOpen: boolean;
   }[];
   logo?: string;
+  vaccineTypes?: string[];
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  currentPage?: number;
+  lastPage?: number;
+  total?: number;
+  perPage?: number;
+}
+
+export interface DashboardStats {
+  todaysAppointments?: number;
+  totalPets?: number;
+  myPets?: number;
+  pendingAppointments?: number;
+  upcomingVaccinations?: number;
+  myUpcomingAppointments?: number;
+  totalOwners?: number;
+  totalAppointments?: number;
+  totalVaccinations?: number;
+}
+
+export interface AppointmentStats {
+  byStatus?: Partial<Record<AppointmentStatus, number>>;
+  daily?: Array<{
+    date: string;
+    count: number;
+  }>;
+}
+
+export interface SpeciesDistributionItem {
+  species: string;
+  count: number;
+}
+
+export interface VeterinarianActivityItem {
+  id: string;
+  name: string;
+  specialty?: string;
+  role?: string;
+  appointmentsCount: number;
+  recordsCount: number;
 }

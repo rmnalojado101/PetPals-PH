@@ -28,7 +28,7 @@ export function MainLayout() {
       {/* Main content */}
       <div className="lg:pl-64">
         <Header onMenuClick={() => setSidebarOpen(true)} />
-        <main className="p-6">
+        <main className="p-6" data-tour="page-content">
           <Outlet />
         </main>
       </div>

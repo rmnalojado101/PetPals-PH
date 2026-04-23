@@ -1,15 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { 
-  appointmentsStorage, 
-  petsStorage, 
-  usersStorage,
-  medicalRecordsStorage,
-  vaccinationsStorage 
-} from '@/lib/storage';
+import { api } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Card,
   CardContent,
@@ -36,140 +29,102 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Calendar, 
   Download,
-  FileText,
   Users,
   Stethoscope,
-  TrendingUp
+  Loader2
 } from 'lucide-react';
-import { format, subDays, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { format, subDays, startOfMonth, endOfMonth } from 'date-fns';
+import type { AppointmentStats, DashboardStats, SpeciesDistributionItem, VeterinarianActivityItem } from '@/types';
 
 export default function ReportsPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [dateRange, setDateRange] = useState<'week' | 'month' | 'all'>('month');
+  const [isLoading, setIsLoading] = useState(true);
   
-  const appointments = appointmentsStorage.getAll();
-  const pets = petsStorage.getAll();
-  const owners = usersStorage.getByRole('owner');
-  const vets = usersStorage.getByRole('veterinarian');
-  const records = medicalRecordsStorage.getAll();
-  const vaccinations = vaccinationsStorage.getAll();
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [apptStats, setApptStats] = useState<AppointmentStats | null>(null);
+  const [speciesDistribution, setSpeciesDistribution] = useState<SpeciesDistributionItem[]>([]);
+  const [vetActivity, setVetActivity] = useState<VeterinarianActivityItem[]>([]);
 
-  const getDateRange = () => {
-    const now = new Date();
-    if (dateRange === 'week') {
-      return { start: subDays(now, 7), end: now };
-    } else if (dateRange === 'month') {
-      return { start: startOfMonth(now), end: endOfMonth(now) };
+  const loadReports = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const start = dateRange === 'week' ? subDays(new Date(), 7) : dateRange === 'month' ? startOfMonth(new Date()) : null;
+      const end = dateRange === 'all' ? null : endOfMonth(new Date());
+      
+      const params = start ? { 
+        start_date: format(start, 'yyyy-MM-dd'),
+        end_date: format(end || new Date(), 'yyyy-MM-dd')
+      } : {};
+
+      const [summary, appts, species, vets] = await Promise.all([
+        api.getDashboardData(),
+        api.getAppointmentStats(params),
+        api.getSpeciesDistribution(),
+        api.getVeterinarianActivity(params)
+      ]);
+
+      setStats(summary);
+      setApptStats(appts);
+      setSpeciesDistribution(species);
+      setVetActivity(vets);
+    } catch (error) {
+      console.error('Failed to load reports:', error);
+    } finally {
+      setIsLoading(false);
     }
-    return null;
-  };
+  }, [dateRange]);
 
-  const filterByDate = <T extends { date?: string; createdAt?: string; dateAdministered?: string }>(items: T[]) => {
-    const range = getDateRange();
-    if (!range) return items;
-    
-    return items.filter(item => {
-      const dateStr = item.date || item.createdAt || item.dateAdministered;
-      if (!dateStr) return false;
-      const date = new Date(dateStr);
-      return isWithinInterval(date, range);
-    });
-  };
+  useEffect(() => {
+    void loadReports();
+  }, [loadReports]);
 
-  const filteredAppointments = filterByDate(appointments);
-  const filteredRecords = filterByDate(records);
-  const filteredVaccinations = filterByDate(vaccinations);
+  if (isLoading || !stats) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh]">
+        <Loader2 className="h-10 w-10 animate-spin text-primary opacity-50" />
+        <p className="mt-4 text-muted-foreground">Generating Reports from MySQL...</p>
+      </div>
+    );
+  }
 
-  // Stats
-  const completedAppointments = filteredAppointments.filter(a => a.status === 'completed').length;
-  const pendingAppointments = filteredAppointments.filter(a => a.status === 'pending').length;
-  const cancelledAppointments = filteredAppointments.filter(a => a.status === 'cancelled').length;
+  const exportAppointments = async () => {
+    try {
+      const startDate = format(subDays(new Date(), 30), 'yyyy-MM-dd');
+      const endDate = format(new Date(), 'yyyy-MM-dd');
+      const blob = await api.exportAppointmentsCsv({
+        start_date: startDate,
+        end_date: endDate,
+      });
 
-  // Vet activity
-  const vetActivity = vets.map(vet => {
-    const vetAppointments = filteredAppointments.filter(a => a.veterinarianId === vet.id);
-    const vetRecords = filteredRecords.filter(r => r.veterinarianId === vet.id);
-    return {
-      vet,
-      appointments: vetAppointments.length,
-      completed: vetAppointments.filter(a => a.status === 'completed').length,
-      records: vetRecords.length,
-    };
-  });
-
-  // Species breakdown
-  const speciesCount = pets.reduce((acc, pet) => {
-    acc[pet.species] = (acc[pet.species] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-
-  const handleExportCSV = (data: any[], filename: string) => {
-    if (data.length === 0) return;
-    
-    const headers = Object.keys(data[0]);
-    const csv = [
-      headers.join(','),
-      ...data.map(row => 
-        headers.map(h => {
-          const val = row[h];
-          return typeof val === 'string' && val.includes(',') ? `"${val}"` : val;
-        }).join(',')
-      )
-    ].join('\n');
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${filename}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
-    a.click();
-  };
-
-  const exportAppointments = () => {
-    const data = filteredAppointments.map(apt => {
-      const pet = petsStorage.getById(apt.petId);
-      const owner = usersStorage.getById(apt.ownerId);
-      const vet = usersStorage.getById(apt.veterinarianId);
-      return {
-        Date: apt.date,
-        Time: apt.time,
-        Pet: pet?.name || 'Unknown',
-        Species: pet?.species || '',
-        Owner: owner?.name || 'Unknown',
-        Veterinarian: vet?.name || 'Unknown',
-        Reason: apt.reason,
-        Status: apt.status,
-      };
-    });
-    handleExportCSV(data, 'appointments');
-  };
-
-  const exportMedicalRecords = () => {
-    const data = filteredRecords.map(record => {
-      const pet = petsStorage.getById(record.petId);
-      const vet = usersStorage.getById(record.veterinarianId);
-      return {
-        Date: record.date,
-        Pet: pet?.name || 'Unknown',
-        Species: pet?.species || '',
-        Veterinarian: vet?.name || 'Unknown',
-        Diagnosis: record.diagnosis,
-        Treatment: record.treatment,
-        Prescription: record.prescription || '',
-      };
-    });
-    handleExportCSV(data, 'medical_records');
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `appointments-${startDate}-to-${endDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export appointments report:', error);
+      toast({
+        title: 'Export Failed',
+        description: error instanceof Error ? error.message : 'Could not export the appointment report.',
+        variant: 'destructive',
+      });
+    }
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in pb-10" data-tour="reports-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Reports</h1>
-          <p className="text-muted-foreground">View clinic statistics and export reports</p>
+          <p className="text-muted-foreground">View clinic statistics and export reports from MySQL</p>
         </div>
         
-        <Select value={dateRange} onValueChange={(v) => setDateRange(v as any)}>
+        <Select value={dateRange} onValueChange={(v) => setDateRange(v as 'week' | 'month' | 'all')}>
           <SelectTrigger className="w-48">
             <Calendar className="mr-2 h-4 w-4" />
             <SelectValue />
@@ -185,33 +140,41 @@ export default function ReportsPage() {
       {/* Summary Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Total Pets</CardDescription>
-            <CardTitle className="text-3xl">{pets.length}</CardTitle>
+          <CardHeader className="pb-2 text-center sm:text-left">
+            <CardDescription className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-blue-500"></span> Total Pets
+            </CardDescription>
+            <CardTitle className="text-3xl">{stats.totalPets}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Pet Owners</CardDescription>
-            <CardTitle className="text-3xl">{owners.length}</CardTitle>
+          <CardHeader className="pb-2 text-center sm:text-left">
+            <CardDescription className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-green-500"></span> Pet Owners
+            </CardDescription>
+            <CardTitle className="text-3xl">{stats.totalOwners}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Appointments ({dateRange === 'all' ? 'All Time' : dateRange})</CardDescription>
-            <CardTitle className="text-3xl">{filteredAppointments.length}</CardTitle>
+          <CardHeader className="pb-2 text-center sm:text-left">
+            <CardDescription className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-yellow-500"></span> Appointments
+            </CardDescription>
+            <CardTitle className="text-3xl">{stats.totalAppointments}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Medical Records ({dateRange === 'all' ? 'All Time' : dateRange})</CardDescription>
-            <CardTitle className="text-3xl">{filteredRecords.length}</CardTitle>
+          <CardHeader className="pb-2 text-center sm:text-left">
+            <CardDescription className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-purple-500"></span> Vaccinations
+            </CardDescription>
+            <CardTitle className="text-3xl">{stats.totalVaccinations}</CardTitle>
           </CardHeader>
         </Card>
       </div>
 
       <Tabs defaultValue="appointments" className="space-y-4">
-        <TabsList>
+        <TabsList className="bg-muted p-1 rounded-lg">
           <TabsTrigger value="appointments">Appointments</TabsTrigger>
           <TabsTrigger value="activity">Vet Activity</TabsTrigger>
           <TabsTrigger value="pets">Pet Statistics</TabsTrigger>
@@ -219,68 +182,65 @@ export default function ReportsPage() {
 
         <TabsContent value="appointments" className="space-y-4">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
               <div>
                 <CardTitle>Appointment Summary</CardTitle>
                 <CardDescription>
-                  Overview of appointment statuses
+                  Status distribution for the selected period
                 </CardDescription>
               </div>
-              <Button variant="outline" onClick={exportAppointments}>
+              <Button variant="outline" size="sm" onClick={exportAppointments}>
                 <Download className="mr-2 h-4 w-4" />
                 Export CSV
               </Button>
             </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 sm:grid-cols-3 mb-6">
-                <div className="rounded-lg bg-green-50 p-4">
-                  <p className="text-sm text-green-600">Completed</p>
-                  <p className="text-2xl font-bold text-green-700">{completedAppointments}</p>
+            <CardContent className="pt-6">
+              <div className="grid gap-4 sm:grid-cols-3 mb-8">
+                <div className="rounded-xl border bg-white p-4 shadow-sm">
+                  <div className="flex items-center gap-2 text-sm font-medium text-green-600 mb-1">
+                    <div className="h-2 w-2 rounded-full bg-green-500"></div> Completed
+                  </div>
+                  <p className="text-2xl font-bold">{apptStats?.byStatus?.completed || 0}</p>
                 </div>
-                <div className="rounded-lg bg-yellow-50 p-4">
-                  <p className="text-sm text-yellow-600">Pending</p>
-                  <p className="text-2xl font-bold text-yellow-700">{pendingAppointments}</p>
+                <div className="rounded-xl border bg-white p-4 shadow-sm">
+                  <div className="flex items-center gap-2 text-sm font-medium text-yellow-600 mb-1">
+                    <div className="h-2 w-2 rounded-full bg-yellow-500"></div> Pending
+                  </div>
+                  <p className="text-2xl font-bold">{apptStats?.byStatus?.pending || 0}</p>
                 </div>
-                <div className="rounded-lg bg-red-50 p-4">
-                  <p className="text-sm text-red-600">Cancelled</p>
-                  <p className="text-2xl font-bold text-red-700">{cancelledAppointments}</p>
+                <div className="rounded-xl border bg-white p-4 shadow-sm">
+                  <div className="flex items-center gap-2 text-sm font-medium text-red-600 mb-1">
+                    <div className="h-2 w-2 rounded-full bg-red-500"></div> Cancelled
+                  </div>
+                  <p className="text-2xl font-bold">{apptStats?.byStatus?.cancelled || 0}</p>
                 </div>
               </div>
 
-              {filteredAppointments.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No appointments in the selected period
-                </p>
+              {!apptStats?.daily || apptStats.daily.length === 0 ? (
+                <div className="text-center py-12 bg-muted/20 rounded-lg border-2 border-dashed">
+                  <Calendar className="h-12 w-12 mx-auto text-muted-foreground opacity-20 mb-2" />
+                  <p className="text-muted-foreground">No appointment activity in this period</p>
+                </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Pet</TableHead>
-                      <TableHead>Owner</TableHead>
-                      <TableHead>Veterinarian</TableHead>
-                      <TableHead>Reason</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredAppointments.slice(0, 10).map((apt) => {
-                      const pet = petsStorage.getById(apt.petId);
-                      const owner = usersStorage.getById(apt.ownerId);
-                      const vet = usersStorage.getById(apt.veterinarianId);
-                      return (
-                        <TableRow key={apt.id}>
-                          <TableCell>{format(new Date(apt.date), 'MMM d, yyyy')}</TableCell>
-                          <TableCell>{pet?.name}</TableCell>
-                          <TableCell>{owner?.name}</TableCell>
-                          <TableCell>{vet?.name}</TableCell>
-                          <TableCell className="max-w-32 truncate">{apt.reason}</TableCell>
-                          <TableCell className="capitalize">{apt.status}</TableCell>
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Daily Activity Log</h4>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Total Appointments</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {apptStats.daily.map((day) => (
+                        <TableRow key={day.date}>
+                          <TableCell className="font-medium">{format(new Date(day.date), 'MMMM d, yyyy')}</TableCell>
+                          <TableCell className="text-right font-bold">{day.count}</TableCell>
                         </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -288,31 +248,48 @@ export default function ReportsPage() {
 
         <TabsContent value="activity" className="space-y-4">
           <Card>
-            <CardHeader>
+            <CardHeader className="border-b pb-4">
               <CardTitle>Veterinarian Activity</CardTitle>
               <CardDescription>
-                Performance metrics by veterinarian
+                Staff performance metrics for {dateRange === 'all' ? 'all time' : `this ${dateRange}`}
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Veterinarian</TableHead>
-                    <TableHead>Total Appointments</TableHead>
-                    <TableHead>Completed</TableHead>
-                    <TableHead>Medical Records</TableHead>
+                    <TableHead>Specialty</TableHead>
+                    <TableHead className="text-center">Appointments Managed</TableHead>
+                    <TableHead className="text-center">Medical Records Created</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {vetActivity.map(({ vet, appointments, completed, records }) => (
-                    <TableRow key={vet.id}>
-                      <TableCell className="font-medium">{vet.name}</TableCell>
-                      <TableCell>{appointments}</TableCell>
-                      <TableCell>{completed}</TableCell>
-                      <TableCell>{records}</TableCell>
+                  {vetActivity.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        No activity recorded for this period.
+                      </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    vetActivity.map((activity) => (
+                      <TableRow key={activity.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold">
+                               {activity.name.charAt(0)}
+                             </div>
+                             {activity.name}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground italic text-sm">
+                          {activity.specialty || 'General Practice'}
+                        </TableCell>
+                        <TableCell className="text-center font-bold">{activity.appointmentsCount}</TableCell>
+                        <TableCell className="text-center font-bold">{activity.recordsCount}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -320,71 +297,77 @@ export default function ReportsPage() {
         </TabsContent>
 
         <TabsContent value="pets" className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Pets by Species</CardTitle>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card className="shadow-sm">
+              <CardHeader className="border-b pb-4 bg-muted/5">
+                <CardTitle className="flex items-center gap-2">
+                  <span className="text-primary mt-1">🐾</span> Pets by Species
+                </CardTitle>
                 <CardDescription>
-                  Distribution of registered pets
+                  Distribution of registered pets in the system
                 </CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {Object.entries(speciesCount)
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([species, count]) => (
-                      <div key={species} className="flex items-center justify-between">
+              <CardContent className="pt-6">
+                <div className="space-y-4">
+                  {speciesDistribution.length === 0 ? (
+                    <p className="text-center text-muted-foreground py-8">No pets registered yet.</p>
+                  ) : (
+                    speciesDistribution.map((item) => (
+                      <div key={item.species} className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted/50 transition-colors">
                         <div className="flex items-center gap-3">
-                          <span className="text-2xl">
-                            {species === 'dog' ? '🐕' : 
-                             species === 'cat' ? '🐈' : 
-                             species === 'bird' ? '🐦' : 
-                             species === 'rabbit' ? '🐰' : 
-                             species === 'fish' ? '🐠' : '🐾'}
-                          </span>
-                          <span className="capitalize font-medium">{species}</span>
+                          <div className="text-2xl transition-transform group-hover:scale-110">
+                            {item.species.toLowerCase() === 'dog' ? '🐕' : 
+                             item.species.toLowerCase() === 'cat' ? '🐈' : 
+                             item.species.toLowerCase() === 'bird' ? '🐦' : 
+                             item.species.toLowerCase() === 'rabbit' ? '🐰' : 
+                             item.species.toLowerCase() === 'fish' ? '🐠' : '🐾'}
+                          </div>
+                          <span className="capitalize font-semibold text-gray-700">{item.species}</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-24 h-2 rounded-full bg-muted overflow-hidden">
+                        <div className="flex items-center gap-3">
+                          <div className="w-32 h-2.5 rounded-full bg-muted overflow-hidden">
                             <div 
-                              className="h-full bg-primary rounded-full"
-                              style={{ width: `${(count / pets.length) * 100}%` }}
+                              className="h-full bg-primary rounded-full transition-all duration-1000"
+                              style={{ width: `${(item.count / stats.totalPets) * 100}%` }}
                             />
                           </div>
-                          <span className="text-sm text-muted-foreground w-8">{count}</span>
+                          <span className="text-sm font-bold text-primary w-8">{item.count}</span>
                         </div>
                       </div>
-                    ))}
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle>Vaccinations</CardTitle>
-                  <CardDescription>
-                    Vaccination records summary
-                  </CardDescription>
-                </div>
+            <Card className="shadow-sm">
+              <CardHeader className="border-b pb-4 bg-muted/5">
+                <CardTitle className="flex items-center gap-2 text-primary">
+                   <Stethoscope className="h-5 w-5" /> Vaccination Summary
+                </CardTitle>
+                <CardDescription>
+                  Operational overview of clinical services
+                </CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="text-center py-8">
-                  <p className="text-4xl font-bold text-primary">{filteredVaccinations.length}</p>
-                  <p className="text-muted-foreground mt-2">
-                    Vaccinations administered {dateRange === 'all' ? 'total' : `this ${dateRange}`}
+              <CardContent className="pt-6">
+                <div className="flex flex-col items-center justify-center py-6">
+                  <div className="h-32 w-32 rounded-full border-8 border-primary/20 flex items-center justify-center relative">
+                    <div className="text-4xl font-black text-primary">{stats.totalVaccinations}</div>
+                    <div className="absolute -bottom-4 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter">administered</div>
+                  </div>
+                  <p className="mt-8 text-sm text-balance text-center text-muted-foreground max-w-[200px]">
+                    Showing <span className="font-bold text-foreground">{stats.totalVaccinations} total</span> immunizations recorded in MySQL.
                   </p>
                 </div>
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                  <div className="rounded-lg bg-muted p-3 text-center">
-                    <p className="text-2xl font-semibold">{vaccinations.filter(v => v.nextDueDate).length}</p>
-                    <p className="text-xs text-muted-foreground">With Follow-up</p>
+                
+                <div className="grid grid-cols-2 gap-4 mt-2">
+                  <div className="rounded-2xl bg-muted/30 p-4 text-center border border-transparent hover:border-primary/20 transition-all">
+                    <p className="text-2xl font-black text-primary">{stats.upcomingVaccinations}</p>
+                    <p className="text-[10px] uppercase font-bold text-muted-foreground mt-1 tracking-wider">Due Next 30 Days</p>
                   </div>
-                  <div className="rounded-lg bg-muted p-3 text-center">
-                    <p className="text-2xl font-semibold">
-                      {new Set(vaccinations.map(v => v.name)).size}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Vaccine Types</p>
+                  <div className="rounded-2xl bg-muted/30 p-4 text-center border border-transparent hover:border-primary/20 transition-all">
+                    <p className="text-2xl font-black text-primary">Persisted</p>
+                    <p className="text-[10px] uppercase font-bold text-muted-foreground mt-1 tracking-wider">Data Reliability</p>
                   </div>
                 </div>
               </CardContent>

@@ -31,7 +31,7 @@ class Vaccination extends Model
 
     public function administeredByUser()
     {
-        return $this->belongsTo(User::class, 'administered_by');
+        return $this->belongsTo(Veterinarian::class, 'administered_by');
     }
 
     public function scopeForPet($query, int $petId)

@@ -12,7 +12,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('pet_id')->constrained()->onDelete('cascade');
             $table->foreignId('owner_id')->constrained('users')->onDelete('cascade');
-            $table->foreignId('veterinarian_id')->constrained('users')->onDelete('cascade');
+            $table->foreignId('veterinarian_id')->constrained('veterinarians')->onDelete('cascade');
             $table->date('appointment_date');
             $table->time('appointment_time');
             $table->text('reason');

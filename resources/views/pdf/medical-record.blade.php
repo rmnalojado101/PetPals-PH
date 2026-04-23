@@ -65,7 +65,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>PetPals PH Veterinary Clinic</h1>
+        <h1>PetPals PH </h1>
         <p>Medical Record</p>
         <p>Record ID: {{ $record->id }}</p>
     </div>
@@ -157,7 +157,7 @@
     @endif
 
     <div class="footer">
-        <p>Generated on {{ now()->format('F d, Y h:i A') }} | PetPals PH Veterinary Clinic</p>
+        <p>Generated on {{ now()->format('F d, Y h:i A') }} | PetPals PH</p>
         <p>This document is for medical reference purposes.</p>
     </div>
 </body>

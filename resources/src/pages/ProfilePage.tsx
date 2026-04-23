@@ -14,10 +14,11 @@ import { useToast } from '@/hooks/use-toast';
 import { User, Mail, Phone, MapPin, Save, Lock } from 'lucide-react';
 
 export default function ProfilePage() {
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfile, changePassword } = useAuth();
   const { toast } = useToast();
   
   const [isSaving, setIsSaving] = useState(false);
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: user?.name || '',
     email: user?.email || '',
@@ -42,7 +43,7 @@ export default function ProfilePage() {
     if (success) {
       toast({
         title: 'Profile Updated',
-        description: 'Your profile has been saved.',
+        description: 'Your profile has been saved to the MySQL database.',
       });
     } else {
       toast({
@@ -65,39 +66,36 @@ export default function ProfilePage() {
       return;
     }
 
-    if (passwordData.newPassword.length < 6) {
+    if (passwordData.newPassword.length < 8) {
       toast({
         title: 'Password Too Short',
-        description: 'Password must be at least 6 characters.',
+        description: 'Password must be at least 8 characters.',
         variant: 'destructive',
       });
       return;
     }
 
-    if (passwordData.currentPassword !== user?.password) {
-      toast({
-        title: 'Incorrect Password',
-        description: 'Current password is incorrect.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    const success = await updateProfile({
-      password: passwordData.newPassword,
-    });
+    setChangePasswordLoading(true);
+    const result = await changePassword(passwordData.currentPassword, passwordData.newPassword);
     
-    if (success) {
+    if (result.success) {
       toast({
         title: 'Password Changed',
-        description: 'Your password has been updated.',
+        description: 'Your password has been updated in the database.',
       });
       setPasswordData({
         currentPassword: '',
         newPassword: '',
         confirmPassword: '',
       });
+    } else {
+       toast({
+        title: 'Update Failed',
+        description: result.error || 'Failed to update password.',
+        variant: 'destructive',
+      });
     }
+    setChangePasswordLoading(false);
   };
 
   if (!user) return null;
@@ -240,9 +238,9 @@ export default function ProfilePage() {
             onClick={handleChangePassword} 
             variant="outline" 
             className="w-full"
-            disabled={!passwordData.currentPassword || !passwordData.newPassword}
+            disabled={!passwordData.currentPassword || !passwordData.newPassword || changePasswordLoading}
           >
-            Change Password
+            {changePasswordLoading ? 'Updating...' : 'Change Password'}
           </Button>
         </CardContent>
       </Card>

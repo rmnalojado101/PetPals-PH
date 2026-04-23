@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Veterinarian;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
@@ -25,7 +26,12 @@ class UserController extends Controller
             });
         }
 
-        $users = $query->orderBy('created_at', 'desc')->paginate(20);
+        if (!$request->boolean('include_legacy_veterinarians')) {
+            $query->whereIn('role', ['admin', 'vet_clinic', 'owner']);
+        }
+
+        $users = $query->orderBy('created_at', 'desc')
+            ->paginate($request->integer('per_page', 20));
 
         return response()->json($users);
     }
@@ -41,7 +47,7 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8',
-            'role' => 'required|in:admin,veterinarian,receptionist,owner',
+            'role' => 'required|in:admin,vet_clinic,owner',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
         ]);
@@ -59,10 +65,17 @@ class UserController extends Controller
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
-            'role' => 'sometimes|in:admin,veterinarian,receptionist,owner',
+            'role' => 'sometimes|in:admin,vet_clinic,owner',
+            'password' => 'nullable|string|min:8',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
         ]);
+
+        if (!empty($validated['password'])) {
+            $validated['password'] = Hash::make($validated['password']);
+        } else {
+            unset($validated['password']);
+        }
 
         $user->update($validated);
 
@@ -82,13 +95,27 @@ class UserController extends Controller
 
     public function veterinarians()
     {
-        $vets = User::veterinarians()->get();
+        $vets = Veterinarian::with('clinic')->get();
         return response()->json($vets);
     }
 
-    public function owners()
+    public function owners(Request $request)
     {
-        $owners = User::owners()->with('pets')->get();
+        $user = $request->user();
+        $query = User::owners()->with('pets');
+
+        if ($user->isVetClinic()) {
+            $vetIds = Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $query->whereHas('appointmentsAsOwner', function ($q) use ($vetIds) {
+                $q->whereIn('veterinarian_id', $vetIds);
+            });
+        } elseif ($linkedVetId = $user->linkedVeterinarianId()) {
+            $query->whereHas('appointmentsAsOwner', function ($q) use ($linkedVetId) {
+                $q->where('veterinarian_id', $linkedVetId);
+            });
+        }
+
+        $owners = $query->orderBy('name')->get();
         return response()->json($owners);
     }
 }

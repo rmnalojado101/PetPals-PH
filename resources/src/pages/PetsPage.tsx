@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { petsStorage, usersStorage } from '@/lib/storage';
+import { petsStorage, usersStorage, appointmentsStorage, veterinariansStorage } from '@/lib/storage';
 import type { Pet } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +36,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
@@ -48,7 +49,7 @@ import {
   Filter,
   Eye
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 const SPECIES_OPTIONS = [
   { value: 'dog', label: 'Dog', emoji: '🐕' },
@@ -65,12 +66,16 @@ export default function PetsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const ownerParam = searchParams.get('owner');
   
   const [pets, setPets] = useState<Pet[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [speciesFilter, setSpeciesFilter] = useState<string>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingPet, setEditingPet] = useState<Pet | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
   
   // Form state
   const [formData, setFormData] = useState({
@@ -89,7 +94,7 @@ export default function PetsPage() {
 
   useEffect(() => {
     loadPets();
-  }, [user]);
+  }, [user, ownerParam]);
 
   const loadPets = () => {
     if (!user) return;
@@ -97,7 +102,30 @@ export default function PetsPage() {
     if (user.role === 'owner') {
       setPets(petsStorage.getByOwner(user.id));
     } else {
-      setPets(petsStorage.getAll());
+      if (ownerParam) {
+        // Formally lock search grid to the URL parameter owner
+        setPets(petsStorage.getByOwner(ownerParam));
+      } else {
+        // Enforce the strict appointment verification constraint
+        if (user.role === 'admin') {
+          setPets(petsStorage.getAll());
+          return;
+        }
+        
+        const allowedOwnerIds = new Set<string>();
+        
+        if (user.role === 'vet_clinic') {
+          const clinicVets = veterinariansStorage.getByClinic(user.id).map(v => v.id);
+          appointmentsStorage.getAll().forEach((a: any) => {
+             if (clinicVets.includes(a.veterinarianId)) allowedOwnerIds.add(a.ownerId);
+          });
+        } else if (user.role === 'veterinarian' as any) {
+          appointmentsStorage.getByVet(user.id).forEach((a: any) => allowedOwnerIds.add(a.ownerId));
+        }
+
+        const filteredPets = petsStorage.getAll().filter(p => allowedOwnerIds.has(p.ownerId));
+        setPets(filteredPets);
+      }
     }
   };
 
@@ -187,6 +215,14 @@ export default function PetsPage() {
     const matchesSpecies = speciesFilter === 'all' || pet.species === speciesFilter;
     return matchesSearch && matchesSpecies;
   });
+
+  const totalPets = filteredPets.length;
+  const totalPages = Math.max(1, Math.ceil(totalPets / PAGE_SIZE));
+  const petsToShow = filteredPets.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, speciesFilter, ownerParam]);
 
   const getSpeciesEmoji = (species: string) => {
     return SPECIES_OPTIONS.find(s => s.value === species)?.emoji || '🐾';
@@ -439,7 +475,7 @@ export default function PetsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredPets.map((pet) => {
+                {petsToShow.map((pet) => {
                   const owner = usersStorage.getById(pet.ownerId);
                   return (
                     <TableRow key={pet.id}>
@@ -519,6 +555,44 @@ export default function PetsPage() {
                 })}
               </TableBody>
             </Table>
+            {totalPages > 1 && (
+              <div className="p-4 pt-0">
+                <Pagination>
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setPage((prev) => Math.max(prev - 1, 1));
+                        }}
+                      />
+                    </PaginationItem>
+                    {Array.from({ length: totalPages }, (_, index) => (
+                      <PaginationItem key={index}>
+                        <PaginationLink
+                          href="#"
+                          isActive={page === index + 1}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setPage(index + 1);
+                          }}
+                        >
+                          {index + 1}
+                        </PaginationLink>
+                      </PaginationItem>
+                    ))}
+                    <PaginationItem>
+                      <PaginationNext
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setPage((prev) => Math.min(prev + 1, totalPages));
+                        }}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
