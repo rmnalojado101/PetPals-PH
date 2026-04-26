@@ -1,14 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { 
-  medicalRecordsStorage, 
-  petsStorage, 
-  usersStorage,
-  appointmentsStorage,
-  veterinariansStorage,
-  notificationsStorage
-} from '@/lib/storage';
-import type { MedicalRecord, User, Pet } from '@/types';
+import { api } from '@/lib/api';
+import { petsStorage } from '@/lib/storage';
+import type { MedicalRecord, User, Pet, Veterinarian } from '@/types';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,7 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Plus, Search, Calendar as CalendarIcon, Eye, Edit, Trash2, Stethoscope, Download, ArrowLeft, Users, Heart } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, isValid } from 'date-fns';
 
 export default function MedicalRecordsPage() {
   const { user } = useAuth();
@@ -46,6 +41,7 @@ export default function MedicalRecordsPage() {
   const [viewingRecord, setViewingRecord] = useState<MedicalRecord | null>(null);
   
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [clinicVets, setClinicVets] = useState<Veterinarian[]>([]);
   const [formData, setFormData] = useState({
     diagnosis: '',
     treatment: '',
@@ -55,12 +51,13 @@ export default function MedicalRecordsPage() {
     weight: '',
     temperature: '',
     followUpDate: '',
+    veterinarianId: '',
   });
 
   const filteredOwners = useMemo(() => {
     return owners.filter(o => 
-      o.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      o.email.toLowerCase().includes(searchTerm.toLowerCase())
+      (o.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+      (o.email || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [owners, searchTerm]);
 
@@ -73,7 +70,7 @@ export default function MedicalRecordsPage() {
   } = usePagination(filteredOwners, 10);
 
   const filteredPets = useMemo(() => {
-    return pets.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    return pets.filter(p => (p.name || '').toLowerCase().includes(searchTerm.toLowerCase()));
   }, [pets, searchTerm]);
 
   const {
@@ -86,8 +83,8 @@ export default function MedicalRecordsPage() {
 
   const filteredRecords = useMemo(() => {
     return records.filter(r => 
-      r.diagnosis.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.treatment.toLowerCase().includes(searchTerm.toLowerCase())
+      (r.diagnosis || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.treatment || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [records, searchTerm]);
 
@@ -113,37 +110,59 @@ export default function MedicalRecordsPage() {
     } else if (selectedOwnerId && !selectedPet) {
       loadPetsForOwner(selectedOwnerId);
     } else if (selectedPet) {
-      loadRecordsForPet(selectedPet.id);
+      loadRecordsForPet((selectedPet as any).id);
     }
   }, [user, selectedOwnerId, selectedPet]);
 
-  const loadOwners = () => {
-    if (!user) return;
-    const relevantOwnerIds = new Set<string>();
-    
-    if (user.role === 'admin') {
-      usersStorage.getByRole('owner').forEach(o => relevantOwnerIds.add(o.id));
-    } else if (user.role === 'veterinarian') {
-      appointmentsStorage.getByVet(user.id).forEach(a => relevantOwnerIds.add(a.ownerId));
-    } else if (user.role === 'vet_clinic') {
-      const clinicVets = veterinariansStorage.getByClinic(user.id).map(v => v.id);
-      appointmentsStorage.getAll().forEach(a => {
-        if (clinicVets.includes(a.veterinarianId)) relevantOwnerIds.add(a.ownerId);
-      });
+  // Load clinic vets for vet_clinic users (needed for the medical record form)
+  useEffect(() => {
+    if (user?.role === 'vet_clinic') {
+      api.getVeterinarians().then(vets => {
+        const arr = Array.isArray(vets) ? vets : (vets as any).data ?? [];
+        setClinicVets(arr);
+      }).catch(console.error);
     }
+  }, [user]);
 
-    const fetchedOwners = usersStorage.getAll().filter(u => relevantOwnerIds.has(u.id));
-    setOwners(fetchedOwners);
+  const loadOwners = async () => {
+    if (!user) return;
+    try {
+      // api.getOwners() applies server-side role-based filtering:
+      // admin → all owners, vet_clinic → owners with appointments at this clinic
+      const data = await api.getOwners();
+      setOwners(data);
+    } catch (err) {
+      console.error('Failed to load owners from API:', err);
+      setOwners([]);
+    }
   };
 
-  const loadPetsForOwner = (ownerId: string) => {
-    setPets(petsStorage.getByOwner(ownerId));
+  const loadPetsForOwner = async (ownerId: string) => {
+    try {
+      const response = await api.getPets({ owner_id: ownerId, per_page: 200 });
+      const list: Pet[] = Array.isArray(response) ? response : (response as any).data ?? [];
+      setPets(list);
+    } catch (err) {
+      console.error('Failed to load pets from API:', err);
+      setPets(petsStorage.getByOwner(ownerId));
+    }
   };
 
-  const loadRecordsForPet = (petId: string) => {
-    const data = medicalRecordsStorage.getByPet(petId);
-    data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    setRecords(data);
+  const loadRecordsForPet = async (petId: string) => {
+    try {
+      // /api/pets/{id}/medical-history returns records filtered by role
+      const data = await api.getPetHistory(petId);
+      const list: MedicalRecord[] = Array.isArray(data) ? data : [];
+      list.sort((a, b) => {
+        const dateA = (a as any).recordDate || (a as any).record_date || (a as any).date || '';
+        const dateB = (b as any).recordDate || (b as any).record_date || (b as any).date || '';
+        return new Date(dateB).getTime() - new Date(dateA).getTime();
+      });
+      setRecords(list);
+    } catch (err) {
+      console.error('Failed to load medical records from API:', err);
+      setRecords([]);
+    }
   };
 
   // UI Handlers
@@ -161,79 +180,100 @@ export default function MedicalRecordsPage() {
     setFormData({
       diagnosis: '', treatment: '', prescription: '', labResults: '',
       notes: '', weight: '', temperature: '', followUpDate: '',
+      veterinarianId: '',
     });
     setSelectedDate(new Date());
     setEditingRecord(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedPet || !formData.diagnosis || !formData.treatment) {
       toast({ title: 'Missing Information', description: 'Please fill in required fields.', variant: 'destructive' });
       return;
     }
 
-    const recordData = {
-      petId: selectedPet.id,
-      veterinarianId: user?.id || '',
-      date: format(selectedDate, 'yyyy-MM-dd'),
-      diagnosis: formData.diagnosis,
-      treatment: formData.treatment,
-      prescription: formData.prescription || undefined,
-      labResults: formData.labResults || undefined,
-      notes: formData.notes || undefined,
-      weight: formData.weight ? parseFloat(formData.weight) : undefined,
-      temperature: formData.temperature ? parseFloat(formData.temperature) : undefined,
-      followUpDate: formData.followUpDate || undefined,
-    };
+    const petId = (selectedPet as any).id?.toString();
+    const vetId = (selectedPet as any).veterinarianId ||
+      (selectedPet as any).owner?.id ||
+      null;
 
-    if (editingRecord) {
-      medicalRecordsStorage.update(editingRecord.id, recordData);
-      toast({ title: 'Record Updated', description: 'Medical record has been updated.' });
-    } else {
-      medicalRecordsStorage.create(recordData);
-      
-      const pet = petsStorage.getById(recordData.petId);
-      if (pet?.ownerId) {
-         notificationsStorage.create({
-             userId: pet.ownerId,
-             title: 'New Medical Record',
-             message: `A new consultation record was added to ${pet.name}'s medical history.`,
-             type: 'medical',
-         });
+    try {
+      if (editingRecord) {
+        await api.updateMedicalRecord((editingRecord as any).id, {
+          diagnosis: formData.diagnosis,
+          treatment: formData.treatment,
+          prescription: formData.prescription || null,
+          lab_results: formData.labResults || null,
+          notes: formData.notes || null,
+          weight: formData.weight ? parseFloat(formData.weight) : null,
+          temperature: formData.temperature ? parseFloat(formData.temperature) : null,
+          follow_up_date: formData.followUpDate || null,
+          veterinarian_id: formData.veterinarianId || undefined,
+        });
+        toast({ title: 'Record Updated', description: 'Medical record has been updated.' });
+      } else {
+        // For vet_clinic creating a record, veterinarian_id must be provided
+        await api.createMedicalRecord({
+          pet_id: petId,
+          record_date: format(selectedDate, 'yyyy-MM-dd'),
+          diagnosis: formData.diagnosis,
+          treatment: formData.treatment,
+          prescription: formData.prescription || null,
+          lab_results: formData.labResults || null,
+          notes: formData.notes || null,
+          weight: formData.weight ? parseFloat(formData.weight) : null,
+          temperature: formData.temperature ? parseFloat(formData.temperature) : null,
+          follow_up_date: formData.followUpDate || null,
+          veterinarian_id: formData.veterinarianId || undefined,
+        });
+        toast({ title: 'Record Created', description: 'Medical record has been saved for ' + selectedPet.name });
       }
-
-      toast({ title: 'Record Created', description: 'Medical record has been saved for ' + selectedPet.name });
+      await loadRecordsForPet(petId);
+    } catch (err: any) {
+      toast({ title: 'Error', description: err?.message || 'Failed to save record.', variant: 'destructive' });
     }
 
-    loadRecordsForPet(selectedPet.id);
     setIsDialogOpen(false);
     resetForm();
   };
 
   const handleEdit = (record: MedicalRecord) => {
+    const r = record as any;
     setEditingRecord(record);
     setFormData({
       diagnosis: record.diagnosis, treatment: record.treatment, prescription: record.prescription || '',
-      labResults: record.labResults || '', notes: record.notes || '', weight: record.weight?.toString() || '',
-      temperature: record.temperature?.toString() || '', followUpDate: record.followUpDate || '',
+      labResults: r.labResults || record.labResults || '', notes: record.notes || '', weight: record.weight?.toString() || '',
+      temperature: record.temperature?.toString() || '', followUpDate: r.followUpDate || record.followUpDate || '',
+      veterinarianId: r.veterinarianId?.toString() || '',
     });
-    setSelectedDate(new Date(record.date));
+    const dateVal = r.recordDate || record.date;
+    setSelectedDate(dateVal ? new Date(dateVal) : new Date());
     setIsDialogOpen(true);
   };
 
-  const handleDelete = (record: MedicalRecord) => {
+  const handleDelete = async (record: MedicalRecord) => {
     if (confirm('Are you sure you want to delete this medical record?')) {
-      medicalRecordsStorage.delete(record.id);
-      toast({ title: 'Record Deleted', variant: 'destructive' });
-      if (selectedPet) loadRecordsForPet(selectedPet.id);
+      try {
+        await api.deleteMedicalRecord((record as any).id);
+        toast({ title: 'Record Deleted', variant: 'destructive' });
+        if (selectedPet) loadRecordsForPet((selectedPet as any).id);
+      } catch (err: any) {
+        toast({ title: 'Error', description: err?.message || 'Failed to delete record.', variant: 'destructive' });
+      }
     }
   };
 
   const handleExportPDF = (record: MedicalRecord) => {
-    const pet = petsStorage.getById(record.petId);
-    const owner = pet ? usersStorage.getById(pet.ownerId) : null;
-    const vet = usersStorage.getById(record.veterinarianId);
+    const r = record as any;
+    // Data may come from API (embedded) or localStorage
+    const pet = r.pet || petsStorage.getById(r.petId);
+    const owner = r.pet?.owner || null;
+    const vet = r.veterinarian;
+    const recordDate = r.recordDate || record.date;
+    const dateStr = recordDate && isValid(new Date(recordDate))
+      ? format(new Date(recordDate), 'MMMM d, yyyy')
+      : '-';
     
     // Create printable content
     const content = `
@@ -257,8 +297,8 @@ export default function MedicalRecordsPage() {
           <div class="grid">
             <div class="section"><p class="label">Patient:</p><p>${pet?.name} (${pet?.species})</p></div>
             <div class="section"><p class="label">Owner:</p><p>${owner?.name}</p></div>
-            <div class="section"><p class="label">Date:</p><p>${format(new Date(record.date), 'MMMM d, yyyy')}</p></div>
-            <div class="section"><p class="label">Attending Veterinarian:</p><p>${vet?.name}</p></div>
+            <div class="section"><p class="label">Date:</p><p>${dateStr}</p></div>
+            <div class="section"><p class="label">Attending Veterinarian:</p><p>${vet?.name || 'N/A'}</p></div>
           </div>
           <div class="section"><p class="label">Diagnosis:</p><p>${record.diagnosis}</p></div>
           <div class="section"><p class="label">Treatment:</p><p>${record.treatment}</p></div>
@@ -277,10 +317,10 @@ export default function MedicalRecordsPage() {
   };
 
   const getBreadcrumbs = () => {
-    let trace = "Patient Directory";
+    let trace = 'Patient Directory';
     if (selectedOwnerId) {
-      const o = usersStorage.getById(selectedOwnerId);
-      trace = `Patient Directory > ${o?.name}'s Pets`;
+      const o = owners.find(ow => String(ow.id) === String(selectedOwnerId));
+      trace = `Patient Directory > ${o?.name || selectedOwnerId}'s Pets`;
       if (selectedPet) {
         trace += ` > ${selectedPet.name}'s Medical History`;
       }
@@ -390,13 +430,12 @@ export default function MedicalRecordsPage() {
         </TableRow></TableHeader>
         <TableBody>
           {recordsToShow.map((record) => {
-            const vet = usersStorage.getById(record.veterinarianId);
             return (
               <TableRow key={record.id}>
-                <TableCell className="font-medium">{format(new Date(record.date), 'MMM d, yyyy')}</TableCell>
+                <TableCell className="font-medium">{(() => { const d = (record as any).recordDate || record.date; return d && isValid(new Date(d)) ? format(new Date(d), 'MMM d, yyyy') : '-'; })()}</TableCell>
                 <TableCell><p className="line-clamp-2 max-w-xs">{record.diagnosis}</p></TableCell>
                 <TableCell><p className="line-clamp-2 max-w-xs">{record.treatment}</p></TableCell>
-                <TableCell>{vet?.name || 'Unknown Vet'}</TableCell>
+                <TableCell>{(record as any).veterinarian?.name || (record as any).veterinarianName || 'Unknown Vet'}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button variant="ghost" size="icon" onClick={() => setViewingRecord(record)}><Eye className="h-4 w-4" /></Button>
@@ -476,6 +515,27 @@ export default function MedicalRecordsPage() {
                       </PopoverContent>
                     </Popover>
                   </div>
+                  {user?.role === 'vet_clinic' && (
+                    <div className="space-y-2">
+                      <Label>Veterinarian *</Label>
+                      <Select 
+                        value={formData.veterinarianId} 
+                        onValueChange={(val) => setFormData({ ...formData, veterinarianId: val })}
+                        required
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select Veterinarian" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {clinicVets.map(vet => (
+                            <SelectItem key={vet.id} value={vet.id.toString()}>
+                              {vet.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.1" value={formData.weight} onChange={(e) => setFormData({ ...formData, weight: e.target.value })} /></div>
                     <div className="space-y-2"><Label>Temperature (°C)</Label><Input type="number" step="0.1" value={formData.temperature} onChange={(e) => setFormData({ ...formData, temperature: e.target.value })} /></div>
@@ -520,12 +580,12 @@ export default function MedicalRecordsPage() {
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Medical Record Details</DialogTitle></DialogHeader>
           {viewingRecord && (() => {
-            const pet = petsStorage.getById(viewingRecord.petId);
-            const vet = usersStorage.getById(viewingRecord.veterinarianId);
+            const pet = (viewingRecord as any).pet || petsStorage.getById((viewingRecord as any).petId);
+            const vet = (viewingRecord as any).veterinarian;
             return (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div><Label className="text-muted-foreground">Date</Label><p className="font-medium">{format(new Date(viewingRecord.date), 'MMMM d, yyyy')}</p></div>
+                  <div><Label className="text-muted-foreground">Date</Label><p className="font-medium">{(() => { const d = (viewingRecord as any).recordDate || viewingRecord.date; return d && isValid(new Date(d)) ? format(new Date(d), 'MMMM d, yyyy') : '-'; })()}</p></div>
                   <div><Label className="text-muted-foreground">Veterinarian</Label><p className="font-medium">{vet?.name}</p></div>
                 </div>
                 <div><Label className="text-muted-foreground">Diagnosis</Label><p>{viewingRecord.diagnosis}</p></div>

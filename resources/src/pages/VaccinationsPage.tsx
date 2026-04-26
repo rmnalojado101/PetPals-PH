@@ -1,12 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { 
-  vaccinationsStorage, 
-  vaccineInventoryStorage,
-  petsStorage, 
-  usersStorage,
-  veterinariansStorage
-} from '@/lib/storage';
+import { api } from '@/lib/api';
+import type { Vaccination, VaccineInventory, User, Pet } from '@/types';
 
 class VaccinationsErrorBoundary extends React.Component<{
   children: React.ReactNode;
@@ -56,7 +51,7 @@ class VaccinationsErrorBoundary extends React.Component<{
     return this.props.children;
   }
 }
-import type { Vaccination, VaccineInventory } from '@/types';
+
 import { usePagination } from '@/hooks/usePagination';
 import { PaginationControls } from '@/components/ui/pagination-controls';
 import { Button } from '@/components/ui/button';
@@ -114,27 +109,35 @@ function VaccinationsPageContent() {
     notes: '',
   });
 
+  const [allPets, setAllPets] = useState<Pet[]>([]);
+  const [availableOwners, setAvailableOwners] = useState<User[]>([]);
+
   useEffect(() => {
     loadVaccinations();
     loadInventory();
+    loadContextData();
   }, [user]);
 
-  const loadVaccinations = () => {
+  const loadContextData = async () => {
     if (!user) return;
     try {
-      let data: Vaccination[];
-      if (user.role === 'owner') {
-        const myPets = petsStorage.getByOwner(user.id);
-        data = myPets.flatMap(pet => vaccinationsStorage.getByPet(pet.id));
-      } else if (user.role === 'vet_clinic') {
-        const clinicVets = veterinariansStorage.getByClinic(user.id).map(v => v.id);
-        data = vaccinationsStorage.getAll().filter(v => 
-          v.administeredBy === user.id || clinicVets.includes(v.administeredBy)
-        );
-      } else {
-        data = vaccinationsStorage.getAll();
-      }
+      const ownersData = await api.getOwners();
+      setAvailableOwners(ownersData);
+      
+      const petsData = await api.getPets({ per_page: 500 });
+      setAllPets(Array.isArray(petsData) ? petsData : (petsData as any).data ?? []);
+    } catch (err) {
+      console.error('Failed to load context data', err);
+    }
+  };
 
+  const loadVaccinations = async () => {
+    if (!user) return;
+    try {
+      const response = await api.getVaccinations({ per_page: 500 });
+      const data = Array.isArray(response) ? response : (response as any).data ?? [];
+      
+      // Sort is handled by backend usually, but for consistency:
       data.sort((a, b) => new Date(b.dateAdministered).getTime() - new Date(a.dateAdministered).getTime());
       setVaccinations(data);
     } catch (error) {
@@ -143,10 +146,11 @@ function VaccinationsPageContent() {
     }
   };
 
-  const loadInventory = () => {
+  const loadInventory = async () => {
     if (user?.role === 'vet_clinic') {
       try {
-        setInventory(vaccineInventoryStorage.getByClinic(user.id));
+        const data = await api.getInventory();
+        setInventory(data);
       } catch (error) {
         console.error('Failed loading inventory', error);
         toast({ title: 'Inventory Load Error', description: 'Could not load vaccine inventory.', variant: 'destructive' });
@@ -168,7 +172,7 @@ function VaccinationsPageContent() {
     setEditingVax(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       if (!user) {
@@ -177,62 +181,53 @@ function VaccinationsPageContent() {
       }
 
       const vaccineName = (formData.name === 'Other' ? formData.customName : formData.name).trim();
-      const administeredDate = new Date(formData.dateAdministered);
-      const nextDue = formData.nextDueDate ? new Date(formData.nextDueDate) : undefined;
-
+      
       if (!formData.petId || !vaccineName) {
         toast({ title: 'Missing Information', description: 'Please fill in all required fields.', variant: 'destructive' });
         return;
       }
 
-      if (!isValid(administeredDate)) {
-        toast({ title: 'Invalid Date', description: 'Please enter a valid administered date.', variant: 'destructive' });
-        return;
-      }
-
-      if (formData.nextDueDate && nextDue && !isValid(nextDue)) {
-        toast({ title: 'Invalid Booster Date', description: 'Please enter a valid next booster date.', variant: 'destructive' });
-        return;
-      }
-
-      const vaxData = {
-        petId: formData.petId,
+      const vaxPayload = {
+        pet_id: formData.petId,
         name: vaccineName,
-        dateAdministered: formData.dateAdministered,
-        nextDueDate: formData.nextDueDate || undefined,
-        administeredBy: user.id,
-        batchNumber: formData.batchNumber || undefined,
-        notes: formData.notes || undefined,
+        date_administered: formData.dateAdministered,
+        next_due_date: formData.nextDueDate || null,
+        batch_number: formData.batchNumber || null,
+        notes: formData.notes || null,
       };
 
       if (editingVax) {
-        vaccinationsStorage.update(editingVax.id, vaxData);
+        await api.updateVaccination(editingVax.id, vaxPayload);
         toast({ title: 'Vaccination Updated', description: 'Vaccination record has been updated.' });
       } else {
-        vaccinationsStorage.create(vaxData);
+        await api.createVaccination(vaxPayload);
         toast({ title: 'Vaccination Added', description: 'Record saved successfully.' });
       }
 
-      loadVaccinations();
-      loadInventory();
+      await loadVaccinations();
+      await loadInventory();
       setIsDialogOpen(false);
       resetForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Vaccination submit failed', error);
-      toast({ title: 'Submission Error', description: 'Unable to save vaccination. Check console for details.', variant: 'destructive' });
+      toast({ title: 'Submission Error', description: error.message || 'Unable to save vaccination.', variant: 'destructive' });
     }
   };
 
-  const submitStockUpdate = (e: React.FormEvent) => {
+  const submitStockUpdate = async (e: React.FormEvent) => {
      e.preventDefault();
      if (!user || user.role !== 'vet_clinic') return;
      const vol = parseInt(stockFormData.quantity);
      if (isNaN(vol) || vol <= 0) return;
      
-     vaccineInventoryStorage.upsert(user.id, stockFormData.name, vol);
-     toast({ title: 'Inventory Replenished', description: `Successfully added ${vol} units of ${stockFormData.name}.` });
-     loadInventory();
-     setIsStockDialogOpen(false);
+     try {
+       await api.upsertInventory(stockFormData.name, vol);
+       toast({ title: 'Inventory Replenished', description: `Successfully added ${vol} units of ${stockFormData.name}.` });
+       await loadInventory();
+       setIsStockDialogOpen(false);
+     } catch (err) {
+       toast({ title: 'Stock Update Error', variant: 'destructive' });
+     }
   };
 
   const handleUpdateStock = (vaxName: string) => {
@@ -240,19 +235,26 @@ function VaccinationsPageContent() {
      setIsStockDialogOpen(true);
   };
 
-  const submitInfoUpdate = (e: React.FormEvent) => {
+  const submitInfoUpdate = async (e: React.FormEvent) => {
      e.preventDefault();
      if (!user || user.role !== 'vet_clinic') return;
      
-     vaccineInventoryStorage.update(user.id, infoFormData.name, {
-        batchNumber: infoFormData.batchNumber,
-        origin: infoFormData.origin,
-        expirationDate: infoFormData.expirationDate,
-        description: infoFormData.description,
-     });
-     toast({ title: 'Information Saved', description: `Metadata updated for ${infoFormData.name}.` });
-     loadInventory();
-     setIsInfoDialogOpen(false);
+     const item = inventory.find(i => i.name === infoFormData.name);
+     if (!item) return;
+
+     try {
+       await api.updateInventory(item.id, {
+          batch_number: infoFormData.batchNumber,
+          origin: infoFormData.origin,
+          expiration_date: infoFormData.expirationDate,
+          description: infoFormData.description,
+       });
+       toast({ title: 'Information Saved', description: `Metadata updated for ${infoFormData.name}.` });
+       await loadInventory();
+       setIsInfoDialogOpen(false);
+     } catch (err) {
+       toast({ title: 'Information Update Error', variant: 'destructive' });
+     }
   };
 
   const handleUpdateInfo = (vaxName: string, batchNumber: string, origin: string, expirationDate: string, description: string) => {
@@ -263,10 +265,10 @@ function VaccinationsPageContent() {
   const handleEdit = (vax: Vaccination) => {
     setEditingVax(vax);
     const isCommonVax = COMMON_VACCINES.includes(vax.name);
-    const pet = petsStorage.getById(vax.petId);
+    const pet = allPets.find(p => String(p.id) === String(vax.petId));
     setFormData({
-      ownerId: pet?.ownerId || (user?.role === 'owner' ? user.id : ''),
-      petId: vax.petId,
+      ownerId: pet?.ownerId?.toString() || (user?.role === 'owner' ? user.id : ''),
+      petId: vax.petId.toString(),
       name: isCommonVax ? vax.name : 'Other',
       customName: isCommonVax ? '' : vax.name,
       dateAdministered: vax.dateAdministered,
@@ -277,42 +279,50 @@ function VaccinationsPageContent() {
     setIsDialogOpen(true);
   };
 
-  const handleDelete = (vax: Vaccination) => {
+  const handleDelete = async (vax: Vaccination) => {
     if (confirm('Are you sure you want to delete this vaccination record?')) {
-      vaccinationsStorage.delete(vax.id);
-      toast({ title: 'Record Deleted', description: 'Vaccination record has been removed.', variant: 'destructive' });
-      loadVaccinations();
+      try {
+        await api.deleteVaccination(vax.id);
+        toast({ title: 'Record Deleted', description: 'Vaccination record has been removed.', variant: 'destructive' });
+        await loadVaccinations();
+      } catch (err) {
+        toast({ title: 'Delete Error', variant: 'destructive' });
+      }
     }
   };
 
-  const pets = user?.role === 'owner' ? petsStorage.getByOwner(user.id) : petsStorage.getAll();
-  const availableOwners = usersStorage.getByRole('owner');
-  const availablePets = user?.role === 'owner' ? pets : formData.ownerId ? petsStorage.getByOwner(formData.ownerId) : [];
+  const availablePets = user?.role === 'owner' ? allPets.filter(p => String(p.ownerId) === String(user.id)) : formData.ownerId ? allPets.filter(p => String(p.ownerId) === String(formData.ownerId)) : [];
   const canEdit = user?.role === 'admin' || user?.role === 'vet_clinic';
-
-  useEffect(() => {
-    if (user?.role !== 'owner' && availableOwners.length > 0 && !formData.ownerId) {
-      setFormData((prev) => ({ ...prev, ownerId: availableOwners[0].id, petId: '' }));
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const todayVaccinations = vaccinations.filter((vax) => {
+    if (!vax.dateAdministered) {
+      return false;
     }
-  }, [availableOwners, formData.ownerId, user?.role]);
 
-  // Derived statistics
-  const todayString = format(new Date(), 'yyyy-MM-dd');
-  const todayVaccinations = vaccinations.filter(v => v.dateAdministered === todayString);
-  const totalPetsVaccinated = new Set(vaccinations.map(v => v.petId)).size;
-  const totalPetsVaccinatedToday = new Set(todayVaccinations.map(v => v.petId)).size;
+    const administeredAt = new Date(vax.dateAdministered);
+
+    return isValid(administeredAt) && format(administeredAt, 'yyyy-MM-dd') === today;
+  });
+  const totalPetsVaccinated = new Set(vaccinations.map((vax) => String(vax.petId))).size;
+  const totalPetsVaccinatedToday = new Set(todayVaccinations.map((vax) => String(vax.petId))).size;
 
   const mostRecentVax = vaccinations.length > 0 ? vaccinations[0] : null;
   let mostRecentInfo = 'None yet';
   if (mostRecentVax) {
-     const pet = petsStorage.getById(mostRecentVax.petId);
+     const pet = (mostRecentVax as any).pet || allPets.find(p => String(p.id) === String(mostRecentVax.petId));
      mostRecentInfo = pet ? `${pet.name} (${mostRecentVax.name})` : mostRecentVax.name;
   }
 
   // Searching logic
   const matchSearch = (vax: Vaccination) => {
-    const pet = petsStorage.getById(vax.petId);
-    return pet?.name.toLowerCase().includes(searchTerm.toLowerCase()) || vax.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const pet = (vax as any).pet || allPets.find(p => String(p.id) === String(vax.petId));
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    return (pet?.name || '').toLowerCase().includes(normalizedSearch) || (vax.name || '').toLowerCase().includes(normalizedSearch);
   };
 
   const filteredVaccinations = vaccinations.filter(matchSearch);
@@ -375,9 +385,9 @@ function VaccinationsPageContent() {
         </TableHeader>
         <TableBody>
           {data.map((vax) => {
-            const pet = petsStorage.getById(vax.petId);
-            const ownerUser = pet ? usersStorage.getById(pet.ownerId) : null;
-            const vetUser = usersStorage.getById(vax.administeredBy);
+            const pet = (vax as any).pet || allPets.find(p => String(p.id) === String(vax.petId));
+            const ownerUser = pet?.owner || availableOwners.find(o => String(o.id) === String(pet?.ownerId));
+            const vetUser = (vax as any).administeredByVet || (vax as any).clinician;
             const status = getVaxStatus(vax);
             return (
               <TableRow key={vax.id}>
@@ -387,7 +397,7 @@ function VaccinationsPageContent() {
                 </TableCell>
                 <TableCell><p className="font-medium">{pet?.name}</p><p className="text-sm text-muted-foreground capitalize">{pet?.species}</p></TableCell>
                 <TableCell><p className="font-medium">{vax.name}</p>{vax.batchNumber && <p className="text-xs text-muted-foreground">Batch: {vax.batchNumber}</p>}</TableCell>
-                <TableCell>{isValid(new Date(vax.dateAdministered)) ? format(new Date(vax.dateAdministered), 'MMM d, yyyy') : '-'}</TableCell>
+                <TableCell>{vax.dateAdministered && isValid(new Date(vax.dateAdministered)) ? format(new Date(vax.dateAdministered), 'MMM d, yyyy') : '-'}</TableCell>
                 <TableCell>{vax.nextDueDate && isValid(new Date(vax.nextDueDate)) ? format(new Date(vax.nextDueDate), 'MMM d, yyyy') : '-'}</TableCell>
                 <TableCell><Badge variant={status === 'overdue' ? 'destructive' : status === 'due-soon' ? 'secondary' : 'outline'}>{status === 'overdue' ? 'Overdue' : status === 'due-soon' ? 'Due Soon' : 'Current'}</Badge></TableCell>
                 <TableCell><p>{vetUser?.name || 'Veterinarian'}</p></TableCell>

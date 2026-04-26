@@ -160,8 +160,11 @@ export interface DashboardStats {
   totalPets?: number;
   myPets?: number;
   pendingAppointments?: number;
+  completedAppointments?: number;
   upcomingVaccinations?: number;
   myUpcomingAppointments?: number;
+  totalRecords?: number;
+  myTotalRecords?: number;
   totalOwners?: number;
   totalAppointments?: number;
   totalVaccinations?: number;

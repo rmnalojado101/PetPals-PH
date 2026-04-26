@@ -74,6 +74,16 @@ function convertDbIds<T extends object>(item: T): T {
     }
   });
 
+  if (converted.allergies === undefined || converted.allergies === null) {
+    converted.allergies = [];
+  } else if (typeof converted.allergies === 'string') {
+    try {
+      converted.allergies = JSON.parse(converted.allergies);
+    } catch {
+      converted.allergies = String(converted.allergies).split(',').map((s: string) => s.trim()).filter(Boolean);
+    }
+  }
+
   return converted as T;
 }
 

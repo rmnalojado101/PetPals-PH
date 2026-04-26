@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { petsStorage, usersStorage, appointmentsStorage, veterinariansStorage } from '@/lib/storage';
+import { api } from '@/lib/api';
+import { petsStorage, usersStorage } from '@/lib/storage';
 import type { Pet } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -95,35 +96,30 @@ export default function PetsPage() {
     loadPets();
   }, [user, ownerParam]);
 
-  const loadPets = () => {
+  const loadPets = async () => {
     if (!user) return;
-    
-    if (user.role === 'owner') {
-      setPets(petsStorage.getByOwner(user.id));
-    } else {
-      if (ownerParam) {
-        // Formally lock search grid to the URL parameter owner
+
+    try {
+      // api.getPets() applies server-side role-based filtering:
+      // - owner: only their pets
+      // - vet_clinic/admin: all pets (optionally filtered by owner_id)
+      const params: Record<string, string | number | undefined> = { per_page: 200 };
+      if (ownerParam) params.owner_id = ownerParam;
+
+      const response = await api.getPets(params);
+      const list: Pet[] = Array.isArray(response)
+        ? response
+        : (response as any).data ?? [];
+      setPets(list);
+    } catch (error) {
+      console.error('Failed to load pets from API, falling back to localStorage:', error);
+      // Fallback to localStorage
+      if (user.role === 'owner') {
+        setPets(petsStorage.getByOwner(user.id));
+      } else if (ownerParam) {
         setPets(petsStorage.getByOwner(ownerParam));
       } else {
-        // Enforce the strict appointment verification constraint
-        if (user.role === 'admin') {
-          setPets(petsStorage.getAll());
-          return;
-        }
-        
-        const allowedOwnerIds = new Set<string>();
-        
-        if (user.role === 'vet_clinic') {
-          const clinicVets = veterinariansStorage.getByClinic(user.id).map(v => v.id);
-          appointmentsStorage.getAll().forEach((a: any) => {
-             if (clinicVets.includes(a.veterinarianId)) allowedOwnerIds.add(a.ownerId);
-          });
-        } else if (user.role === 'veterinarian' as any) {
-          appointmentsStorage.getByVet(user.id).forEach((a: any) => allowedOwnerIds.add(a.ownerId));
-        }
-
-        const filteredPets = petsStorage.getAll().filter(p => allowedOwnerIds.has(p.ownerId));
-        setPets(filteredPets);
+        setPets(petsStorage.getAll());
       }
     }
   };
@@ -209,8 +205,8 @@ export default function PetsPage() {
 
   const filteredPets = pets.filter(pet => {
     const matchesSearch = 
-      pet.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      pet.breed.toLowerCase().includes(searchTerm.toLowerCase());
+      (pet.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (pet.breed || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesSpecies = speciesFilter === 'all' || pet.species === speciesFilter;
     return matchesSearch && matchesSpecies;
   });
@@ -500,7 +496,7 @@ export default function PetsPage() {
                         </TableCell>
                       )}
                       <TableCell>
-                        {pet.allergies.length > 0 ? (
+                        {pet.allergies && pet.allergies.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
                             {pet.allergies.slice(0, 2).map((allergy, i) => (
                               <Badge key={i} variant="outline" className="text-xs">

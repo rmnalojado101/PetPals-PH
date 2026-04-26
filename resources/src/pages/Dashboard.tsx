@@ -1,7 +1,7 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { useEffect, useState } from 'react';
-import type { Pet, Appointment, MedicalRecord, Vaccination, Veterinarian } from '@/types';
-import { appointmentsStorage, medicalRecordsStorage, petsStorage, vaccinationsStorage, veterinariansStorage } from '@/lib/storage';
+import type { Pet, Appointment, MedicalRecord, Vaccination, DashboardStats } from '@/types';
+import { api } from '@/lib/api';
 import { WelcomeBanner } from '@/components/dashboard/WelcomeBanner';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { QuickActionCard } from '@/components/dashboard/QuickActionCard';
@@ -28,28 +28,49 @@ export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [pets, setPets] = useState<Pet[]>([]);
-  const [rawAppointments, setAppointments] = useState<Appointment[]>([]);
-  const [rawRecords, setAllRecords] = useState<MedicalRecord[]>([]);
-  const [rawVaccinations, setVaccinations] = useState<Vaccination[]>([]);
-  const [veterinarians, setVeterinarians] = useState<Veterinarian[]>([]);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([]);
+  const [recentRecords, setRecentRecords] = useState<MedicalRecord[]>([]);
+  const [dueVaccinations, setDueVaccinations] = useState<Vaccination[]>([]);
+  const [myPetsList, setMyPetsList] = useState<Pet[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     if (!user) return;
+    loadDashboardData();
+  }, [user]);
 
+  const loadDashboardData = async () => {
+    setIsLoading(true);
     try {
-      setPets(petsStorage.getAll());
-      setAppointments(appointmentsStorage.getAll());
-      setAllRecords(medicalRecordsStorage.getAll());
-      setVaccinations(vaccinationsStorage.getAll());
-      setVeterinarians(veterinariansStorage.getAll());
+      // 1. Get Summary Stats
+      const statsData = await api.getDashboardData();
+      setStats(statsData);
+
+      // 2. Get Upcoming Appointments
+      const appointmentsData = await api.getAppointmentsUpcoming();
+      const appointmentsList = Array.isArray(appointmentsData)
+        ? appointmentsData
+        : (appointmentsData as any).data ?? [];
+      setUpcomingAppointments(appointmentsList.slice(0, 5));
+
+      // 3. Get Recent Consultations (staff) or Pet list (owner)
+      if (user.role !== 'owner') {
+        const recordsData = await api.getMedicalRecords({ per_page: 5 });
+        setRecentRecords(Array.isArray(recordsData) ? recordsData : (recordsData as any).data ?? []);
+        
+        const dueVax = await api.getVaccinationsDueSoon();
+        setDueVaccinations(dueVax);
+      } else {
+        const petsData = await api.getPets({ per_page: 5 });
+        setMyPetsList(Array.isArray(petsData) ? petsData : (petsData as any).data ?? []);
+      }
     } catch (error) {
-      console.error('Dashboard storage load error:', error);
+      console.error('Dashboard API load error:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  };
 
   if (!user) return null;
 
@@ -62,74 +83,17 @@ export default function Dashboard() {
     );
   }
 
-  // Safe fallback guarantees
-  const safePets = Array.isArray(pets) ? pets : [];
-  const safeAppointments = Array.isArray(rawAppointments) ? rawAppointments : [];
-  const safeRecords = Array.isArray(rawRecords) ? rawRecords : [];
-  const safeVaccinations = Array.isArray(rawVaccinations) ? rawVaccinations : [];
-  const safeVeterinarians = Array.isArray(veterinarians) ? veterinarians : [];
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  const nextWeekStr = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-  const allPets = safePets;
-  const allAppointments = safeAppointments;
-  const allRecords = safeRecords;
-  const allVaccinations = safeVaccinations;
-  const allVeterinarians = safeVeterinarians;
-
-  const myPets = user.role === 'owner'
-    ? allPets.filter(p => String(p.ownerId) === String(user.id))
-    : allPets;
-
-  const clinicVetIds = user.role === 'vet_clinic'
-    ? allVeterinarians.filter(v => String(v.clinicId) === String(user.id)).map(v => v.id)
-    : [];
-
-  const filteredAppointments = user.role === 'owner'
-    ? allAppointments.filter(a => String(a.ownerId) === String(user.id))
-    : user.role === 'vet_clinic'
-      ? allAppointments.filter(a => clinicVetIds.includes(a.veterinarianId))
-      : allAppointments;
-
-  const filteredRecords = user.role === 'owner'
-    ? allRecords.filter(r => myPets.some(p => p.id === r.petId))
-    : user.role === 'vet_clinic'
-      ? allRecords.filter(r => clinicVetIds.includes(r.veterinarianId))
-      : allRecords;
-
-  const dueVaccinations = allVaccinations.filter(v => {
-    if (!v.nextDueDate) return false;
-    if (user.role === 'owner') {
-      return myPets.some(p => p.id === v.petId) && v.nextDueDate <= nextWeekStr;
-    }
-    if (user.role === 'vet_clinic') {
-      return (v.administeredBy === user.id || clinicVetIds.includes(v.administeredBy)) && v.nextDueDate <= nextWeekStr;
-    }
-    return v.nextDueDate <= nextWeekStr;
-  });
-
-  const todayAppointments = filteredAppointments.filter(a => a.date === todayStr);
-  const pendingAppointments = filteredAppointments.filter(a => a.status === 'pending');
-
-  const myAppointments = filteredAppointments;
-
-  const upcomingAppointments = myAppointments
-    .filter(a => a.date >= todayStr && a.status !== 'cancelled')
-    .sort((a, b) => {
-      const aTime = a.time || '';
-      const bTime = b.time || '';
-      return String(a.date).localeCompare(String(b.date)) || String(aTime).localeCompare(String(bTime));
-    })
-    .slice(0, 5);
-
-  const recentRecords = filteredRecords
-    .sort((a, b) => {
-      const aDate = a.recordDate || a.date;
-      const bDate = b.recordDate || b.date;
-      return new Date(bDate).getTime() - new Date(aDate).getTime();
-    })
-    .slice(0, 5);
+  // Map stats for easier access
+  const statCounts = {
+    totalPets: stats?.myPets || stats?.totalPets || 0,
+    todayAppointments: user.role === 'owner'
+      ? stats?.myUpcomingAppointments || upcomingAppointments.length
+      : stats?.todaysAppointments || 0,
+    pendingApprovals: stats?.pendingAppointments || 0,
+    dueVaccinations: stats?.upcomingVaccinations || dueVaccinations.length,
+    medicalRecords: stats?.myTotalRecords || stats?.totalRecords || 0,
+    totalVaccinations: stats?.totalVaccinations || 0
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -140,14 +104,14 @@ export default function Dashboard() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Animals"
-          value={myPets.length}
+          value={statCounts.totalPets}
           icon={Heart}
           variant="pink"
           trend="up"
         />
         <StatCard
-          title="Today's Appointments"
-          value={todayAppointments.length}
+          title={user.role === 'owner' ? 'Upcoming Appointments' : "Today's Appointments"}
+          value={statCounts.todayAppointments}
           icon={Calendar}
           variant="blue"
           trend="neutral"
@@ -156,14 +120,14 @@ export default function Dashboard() {
           <>
             <StatCard
               title="Pending Approvals"
-              value={pendingAppointments.length}
+              value={statCounts.pendingApprovals}
               icon={Clock}
               variant="green"
               trend="up"
             />
             <StatCard
               title="Due Vaccinations"
-              value={dueVaccinations.length}
+              value={statCounts.dueVaccinations}
               icon={AlertTriangle}
               variant="orange"
               trend="down"
@@ -174,16 +138,14 @@ export default function Dashboard() {
           <>
             <StatCard
               title="Medical Records"
-              value={myPets.reduce((acc, pet) => 
-                acc + safeRecords.filter(r => r.petId === pet.id).length, 0)}
+              value={statCounts.medicalRecords}
               icon={Stethoscope}
               variant="green"
               trend="up"
             />
             <StatCard
               title="Vaccinations"
-              value={myPets.reduce((acc, pet) => 
-                acc + safeVaccinations.filter(v => v.petId === pet.id).length, 0)}
+              value={statCounts.totalVaccinations}
               icon={Syringe}
               variant="orange"
               trend="up"
@@ -242,10 +204,10 @@ export default function Dashboard() {
             ) : (
               <div className="space-y-3">
                 {upcomingAppointments.map((apt) => {
-                  const pet = safePets.find(p => p.id === apt.petId);
-                  const vet = safeVeterinarians.find(v => v.id === apt.veterinarianId);
-                  const aDate = apt.date;
-                  const aTime = apt.time;
+                  const pet = (apt as any).pet;
+                  const vet = (apt as any).veterinarian;
+                  const aDate = apt.appointmentDate || apt.date;
+                  const aTime = apt.appointmentTime || apt.time;
                   
                   return (
                     <div 
@@ -301,8 +263,8 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-3">
                   {recentRecords.map((record) => {
-                    const pet = safePets.find(p => p.id === record.petId);
-                    const vet = safeVeterinarians.find(v => v.id === record.veterinarianId);
+                    const pet = (record as any).pet;
+                    const vet = (record as any).veterinarian;
                     const rDate = record.recordDate || record.date;
                     
                     return (
@@ -342,7 +304,7 @@ export default function Dashboard() {
               </Button>
             </CardHeader>
             <CardContent>
-              {myPets.length === 0 ? (
+              {myPetsList.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Heart className="h-12 w-12 mx-auto mb-3 opacity-50" />
                   <p>No pets registered yet</p>
@@ -358,7 +320,7 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {myPets.slice(0, 5).map((pet) => (
+                  {myPetsList.map((pet) => (
                     <div 
                       key={pet.id}
                       className="flex items-center justify-between rounded-lg border p-3 hover:bg-muted/50 transition-colors cursor-pointer"
