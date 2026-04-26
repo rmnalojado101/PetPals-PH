@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
 import type { PaginatedResponse, User } from '@/types';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -212,6 +214,8 @@ export default function UsersPage() {
     return matchesSearch && matchesRole;
   });
 
+  const { paginatedData, currentPage, totalPages, nextPage, prevPage } = usePagination(filteredUsers, 10);
+
   if (isLoading && users.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh]">
@@ -388,7 +392,7 @@ export default function UsersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredUsers.map((user) => (
+                {paginatedData.map((user) => (
                   <TableRow key={user.id}>
                     <TableCell>
                       <div className="flex items-center gap-3">
@@ -433,6 +437,14 @@ export default function UsersPage() {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {!isLoading && filteredUsers.length > 0 && (
+            <PaginationControls
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onNext={nextPage}
+              onPrev={prevPage}
+            />
           )}
         </CardContent>
       </Card>

@@ -16,7 +16,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 import { Badge } from '@/components/ui/badge';
 import { 
   Search,  
@@ -31,16 +32,10 @@ export default function OwnersPage() {
   
   const [owners, setOwners] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [page, setPage] = useState(1);
-  const PAGE_SIZE = 10;
 
   useEffect(() => {
     loadOwners();
   }, [user]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [searchTerm]);
 
   const loadOwners = () => {
     if (!user) return;
@@ -86,9 +81,7 @@ export default function OwnersPage() {
     );
   });
 
-  const totalOwners = filteredOwners.length;
-  const totalPages = Math.max(1, Math.ceil(totalOwners / PAGE_SIZE));
-  const ownersToShow = filteredOwners.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const { paginatedData, currentPage, totalPages, nextPage, prevPage } = usePagination(filteredOwners, 10);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -140,7 +133,7 @@ export default function OwnersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {ownersToShow.map((owner) => {
+                  {paginatedData.map((owner) => {
                     const petCount = petsStorage.getByOwner(owner.id).length;
                     return (
                       <TableRow key={owner.id}>
@@ -181,41 +174,14 @@ export default function OwnersPage() {
                   })}
                 </TableBody>
               </Table>
-              {totalPages > 1 && (
-                <Pagination className="mt-4">
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPrevious
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setPage((prev) => Math.max(prev - 1, 1));
-                        }}
-                      />
-                    </PaginationItem>
-                    {Array.from({ length: totalPages }, (_, index) => (
-                      <PaginationItem key={index}>
-                        <PaginationLink
-                          href="#"
-                          isActive={page === index + 1}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setPage(index + 1);
-                          }}
-                        >
-                          {index + 1}
-                        </PaginationLink>
-                      </PaginationItem>
-                    ))}
-                    <PaginationItem>
-                      <PaginationNext
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setPage((prev) => Math.min(prev + 1, totalPages));
-                        }}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
+              {filteredOwners.length > 0 && (
+                <PaginationControls
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onNext={nextPage}
+                  onPrev={prevPage}
+                  className="mt-4"
+                />
               )}
             </>
           )}

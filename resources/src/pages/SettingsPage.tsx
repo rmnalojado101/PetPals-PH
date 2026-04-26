@@ -50,6 +50,8 @@ import {
 } from 'lucide-react';
 import { format, isValid, parseISO } from 'date-fns';
 import type { ClinicSettings, VaccineInventory, Veterinarian } from '@/types';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 type SettingsTab = 'general' | 'hours' | 'system' | 'staff' | 'vaccines';
 
@@ -84,6 +86,16 @@ export default function SettingsPage() {
   const [isInfoDialogOpen, setIsInfoDialogOpen] = useState(false);
   const [infoFormData, setInfoFormData] = useState(EMPTY_INFO_FORM);
 
+  const { paginatedData: paginatedVets, currentPage: vetsPage, totalPages: vetsTotalPages, nextPage: vetsNextPage, prevPage: vetsPrevPage } = usePagination(vets, 10);
+
+  const inventoryVaccineNames = [...(settings?.vaccineTypes || []), ...inventory.map((item) => item.name)]
+    .filter(
+      (name, index, allNames) =>
+        allNames.findIndex((candidate) => candidate.toLowerCase() === name.toLowerCase()) === index
+    );
+
+  const { paginatedData: paginatedInventory, currentPage: invPage, totalPages: invTotalPages, nextPage: invNextPage, prevPage: invPrevPage } = usePagination(inventoryVaccineNames, 10);
+
   useEffect(() => {
     const requestedTab = new URLSearchParams(location.search).get('tab');
 
@@ -107,6 +119,17 @@ export default function SettingsPage() {
   const loadSettings = async () => {
     try {
       const data = await api.getSettings();
+      if (!data.openingHours || data.openingHours.length === 0) {
+        data.openingHours = [
+          { day: 'Monday', open: '08:00', close: '17:00', isOpen: true },
+          { day: 'Tuesday', open: '08:00', close: '17:00', isOpen: true },
+          { day: 'Wednesday', open: '08:00', close: '17:00', isOpen: true },
+          { day: 'Thursday', open: '08:00', close: '17:00', isOpen: true },
+          { day: 'Friday', open: '08:00', close: '17:00', isOpen: true },
+          { day: 'Saturday', open: '09:00', close: '12:00', isOpen: true },
+          { day: 'Sunday', open: '', close: '', isOpen: false },
+        ];
+      }
       setSettings(data);
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -162,7 +185,7 @@ export default function SettingsPage() {
   const handleHoursChange = (index: number, field: 'open' | 'close' | 'isOpen', value: string | boolean) => {
     if (!settings) return;
 
-    const newHours = [...settings.openingHours];
+    const newHours = [...(settings.openingHours || [])];
     newHours[index] = { ...newHours[index], [field]: value };
     setSettings({ ...settings, openingHours: newHours });
   };
@@ -339,11 +362,6 @@ export default function SettingsPage() {
   };
 
   const canManageInventory = user?.role === 'vet_clinic';
-  const inventoryVaccineNames = [...(settings?.vaccineTypes || []), ...inventory.map((item) => item.name)]
-    .filter(
-      (name, index, allNames) =>
-        allNames.findIndex((candidate) => candidate.toLowerCase() === name.toLowerCase()) === index
-    );
 
   if (user?.role !== 'admin' && user?.role !== 'vet_clinic') {
     return (
@@ -480,7 +498,7 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {settings.openingHours.map((hours, index) => (
+                  {(settings.openingHours || []).map((hours, index) => (
                     <div key={hours.day} className="flex items-center gap-4">
                       <div className="w-24">
                         <span className="text-sm font-medium">{hours.day}</span>
@@ -580,7 +598,7 @@ export default function SettingsPage() {
 
                 <div className="space-y-4 pt-4">
                   <h3 className="font-semibold text-lg">Current Veterinarians ({vets.length})</h3>
-                  {vets.map((vet) => (
+                  {paginatedVets.map((vet) => (
                     <div key={vet.id} className="flex items-center justify-between p-3 border rounded-md">
                       <div>
                         <p className="font-medium">
@@ -610,6 +628,14 @@ export default function SettingsPage() {
                   ))}
                   {vets.length === 0 && (
                     <p className="text-sm text-muted-foreground">No veterinarians found.</p>
+                  )}
+                  {vets.length > 0 && (
+                    <PaginationControls
+                      currentPage={vetsPage}
+                      totalPages={vetsTotalPages}
+                      onNext={vetsNextPage}
+                      onPrev={vetsPrevPage}
+                    />
                   )}
                 </div>
               </CardContent>
@@ -715,7 +741,7 @@ export default function SettingsPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {inventoryVaccineNames.map((vaccineName) => {
+                          {paginatedInventory.map((vaccineName) => {
                             const item = inventory.find(
                               (inventoryItem) =>
                                 inventoryItem.name.toLowerCase() === vaccineName.toLowerCase()
@@ -792,6 +818,15 @@ export default function SettingsPage() {
                           })}
                         </TableBody>
                       </Table>
+                      {inventoryVaccineNames.length > 0 && (
+                        <PaginationControls
+                          currentPage={invPage}
+                          totalPages={invTotalPages}
+                          onNext={invNextPage}
+                          onPrev={invPrevPage}
+                          className="mt-4"
+                        />
+                      )}
                     </div>
                   )}
                 </CardContent>

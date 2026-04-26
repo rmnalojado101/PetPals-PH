@@ -57,6 +57,8 @@ class VaccinationsErrorBoundary extends React.Component<{
   }
 }
 import type { Vaccination, VaccineInventory } from '@/types';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -68,7 +70,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Search, Edit, Trash2, Syringe, AlertTriangle, PackagePlus } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Syringe, AlertTriangle, Activity, CheckCircle2, History } from 'lucide-react';
 import { format, isAfter, isBefore, addDays, isValid } from 'date-fns';
 
 const COMMON_VACCINES = [
@@ -207,21 +209,8 @@ function VaccinationsPageContent() {
         vaccinationsStorage.update(editingVax.id, vaxData);
         toast({ title: 'Vaccination Updated', description: 'Vaccination record has been updated.' });
       } else {
-        if (user.role === 'vet_clinic' && formData.name !== 'Other') {
-          const currentStock = vaccineInventoryStorage.getByClinicAndName(user.id, vaccineName)?.stock || 0;
-          if (currentStock <= 0) {
-            toast({
-              title: 'Insufficient Inventory Stock',
-              description: `You do not have any physical stock of ${vaccineName} available! Please refill your inventory first.`,
-              variant: 'destructive',
-            });
-            return;
-          }
-          vaccineInventoryStorage.upsert(user.id, vaccineName, -1);
-        }
-
         vaccinationsStorage.create(vaxData);
-        toast({ title: 'Vaccination Added', description: 'Record saved and clinical inventory decremented.' });
+        toast({ title: 'Vaccination Added', description: 'Record saved successfully.' });
       }
 
       loadVaccinations();
@@ -289,7 +278,7 @@ function VaccinationsPageContent() {
   };
 
   const handleDelete = (vax: Vaccination) => {
-    if (confirm('Are you sure you want to delete this vaccination record? (Inventory will not be refunded)')) {
+    if (confirm('Are you sure you want to delete this vaccination record?')) {
       vaccinationsStorage.delete(vax.id);
       toast({ title: 'Record Deleted', description: 'Vaccination record has been removed.', variant: 'destructive' });
       loadVaccinations();
@@ -300,7 +289,6 @@ function VaccinationsPageContent() {
   const availableOwners = usersStorage.getByRole('owner');
   const availablePets = user?.role === 'owner' ? pets : formData.ownerId ? petsStorage.getByOwner(formData.ownerId) : [];
   const canEdit = user?.role === 'admin' || user?.role === 'vet_clinic';
-  const showInventory = user?.role === 'vet_clinic' || user?.role === 'admin';
 
   useEffect(() => {
     if (user?.role !== 'owner' && availableOwners.length > 0 && !formData.ownerId) {
@@ -308,10 +296,27 @@ function VaccinationsPageContent() {
     }
   }, [availableOwners, formData.ownerId, user?.role]);
 
-  const filteredVaccinations = vaccinations.filter(vax => {
+  // Derived statistics
+  const todayString = format(new Date(), 'yyyy-MM-dd');
+  const todayVaccinations = vaccinations.filter(v => v.dateAdministered === todayString);
+  const totalPetsVaccinated = new Set(vaccinations.map(v => v.petId)).size;
+  const totalPetsVaccinatedToday = new Set(todayVaccinations.map(v => v.petId)).size;
+
+  const mostRecentVax = vaccinations.length > 0 ? vaccinations[0] : null;
+  let mostRecentInfo = 'None yet';
+  if (mostRecentVax) {
+     const pet = petsStorage.getById(mostRecentVax.petId);
+     mostRecentInfo = pet ? `${pet.name} (${mostRecentVax.name})` : mostRecentVax.name;
+  }
+
+  // Searching logic
+  const matchSearch = (vax: Vaccination) => {
     const pet = petsStorage.getById(vax.petId);
     return pet?.name.toLowerCase().includes(searchTerm.toLowerCase()) || vax.name.toLowerCase().includes(searchTerm.toLowerCase());
-  });
+  };
+
+  const filteredVaccinations = vaccinations.filter(matchSearch);
+  const filteredTodayVaccinations = todayVaccinations.filter(matchSearch);
 
   const getVaxStatus = (vax: Vaccination) => {
     if (!vax.nextDueDate) return 'current';
@@ -329,12 +334,85 @@ function VaccinationsPageContent() {
     return status === 'overdue' || status === 'due-soon';
   }).length;
 
+  const { 
+    paginatedData, 
+    currentPage, 
+    totalPages, 
+    nextPage, 
+    prevPage 
+  } = usePagination(filteredVaccinations, 10);
+
+  const { 
+    paginatedData: paginatedToday, 
+    currentPage: currentTodayPage, 
+    totalPages: totalTodayPages, 
+    nextPage: nextTodayPage, 
+    prevPage: prevTodayPage 
+  } = usePagination(filteredTodayVaccinations, 10);
+
+  const renderTable = (data: Vaccination[]) => {
+    if (data.length === 0) {
+       return (
+         <div className="py-16 text-center">
+           <Syringe className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+           <h3 className="text-lg font-semibold mb-2">No records found</h3>
+         </div>
+       );
+    }
+    return (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Owner</TableHead>
+            <TableHead>Patient</TableHead>
+            <TableHead>Vaccine Shot</TableHead>
+            <TableHead>Date Administered</TableHead>
+            <TableHead>Next Booster</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Clinician</TableHead>
+            {canEdit && <TableHead className="text-right">Actions</TableHead>}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {data.map((vax) => {
+            const pet = petsStorage.getById(vax.petId);
+            const ownerUser = pet ? usersStorage.getById(pet.ownerId) : null;
+            const vetUser = usersStorage.getById(vax.administeredBy);
+            const status = getVaxStatus(vax);
+            return (
+              <TableRow key={vax.id}>
+                <TableCell>
+                   <p className="font-medium">{ownerUser?.name || 'Unknown'}</p>
+                   <p className="text-xs text-muted-foreground">{ownerUser?.email || ''}</p>
+                </TableCell>
+                <TableCell><p className="font-medium">{pet?.name}</p><p className="text-sm text-muted-foreground capitalize">{pet?.species}</p></TableCell>
+                <TableCell><p className="font-medium">{vax.name}</p>{vax.batchNumber && <p className="text-xs text-muted-foreground">Batch: {vax.batchNumber}</p>}</TableCell>
+                <TableCell>{isValid(new Date(vax.dateAdministered)) ? format(new Date(vax.dateAdministered), 'MMM d, yyyy') : '-'}</TableCell>
+                <TableCell>{vax.nextDueDate && isValid(new Date(vax.nextDueDate)) ? format(new Date(vax.nextDueDate), 'MMM d, yyyy') : '-'}</TableCell>
+                <TableCell><Badge variant={status === 'overdue' ? 'destructive' : status === 'due-soon' ? 'secondary' : 'outline'}>{status === 'overdue' ? 'Overdue' : status === 'due-soon' ? 'Due Soon' : 'Current'}</Badge></TableCell>
+                <TableCell><p>{vetUser?.name || 'Veterinarian'}</p></TableCell>
+                {canEdit && (
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => handleEdit(vax)}><Edit className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(vax)} className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                    </div>
+                  </TableCell>
+                )}
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    );
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Vaccination</h1>
-          <p className="text-muted-foreground">{showInventory ? "Manage clinical vaccine inventory and consultation logs" : "Track and manage pet vaccinations"}</p>
+          <p className="text-muted-foreground">Track and manage pet vaccinations</p>
         </div>
         
         {canEdit && (
@@ -417,13 +495,43 @@ function VaccinationsPageContent() {
         )}
       </div>
 
-      <Tabs defaultValue="records" className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-3 mb-6">
+        <Card>
+          <CardContent className="p-6 flex flex-row items-center justify-between space-y-0">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">Total Pets Vaccinated</p>
+              <p className="text-2xl font-bold">{totalPetsVaccinated}</p>
+            </div>
+            <Activity className="h-8 w-8 text-primary opacity-75" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6 flex flex-row items-center justify-between space-y-0">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">Vaccinated Today</p>
+              <p className="text-2xl font-bold">{totalPetsVaccinatedToday}</p>
+            </div>
+            <CheckCircle2 className="h-8 w-8 text-green-500 opacity-75" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6 flex flex-row items-center justify-between space-y-0">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">Previous Vaccination</p>
+              <p className="text-sm font-bold truncate max-w-[150px]" title={mostRecentInfo}>{mostRecentInfo}</p>
+            </div>
+            <History className="h-8 w-8 text-muted-foreground opacity-75" />
+          </CardContent>
+        </Card>
+      </div>
+
+      <Tabs defaultValue="today" className="space-y-6">
         <TabsList>
-           <TabsTrigger value="records"><Syringe className="mr-2 h-4 w-4" /> Consultation Logs</TabsTrigger>
-           {showInventory && <TabsTrigger value="inventory"><PackagePlus className="mr-2 h-4 w-4" /> Vaccine Inventory</TabsTrigger>}
+           <TabsTrigger value="today"><CheckCircle2 className="mr-2 h-4 w-4" /> Today's Logs</TabsTrigger>
+           <TabsTrigger value="history"><History className="mr-2 h-4 w-4" /> Vaccination History</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="records" className="space-y-6">
+        <div className="space-y-6">
           {dueCount > 0 && (
             <Card className="border-warning bg-warning/10">
               <CardContent className="py-4">
@@ -440,159 +548,39 @@ function VaccinationsPageContent() {
               </div>
             </CardContent>
           </Card>
+        </div>
 
+        <TabsContent value="today" className="space-y-6 mt-6">
           <Card>
             <CardContent className="p-0">
-              {filteredVaccinations.length === 0 ? (
-                <div className="py-16 text-center"><Syringe className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" /><h3 className="text-lg font-semibold mb-2">No records found</h3></div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Patient</TableHead><TableHead>Vaccine Shot</TableHead><TableHead>Date Administered</TableHead><TableHead>Next Booster</TableHead><TableHead>Status</TableHead><TableHead>Clinician</TableHead>{canEdit && <TableHead className="text-right">Actions</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredVaccinations.map((vax) => {
-                      const pet = petsStorage.getById(vax.petId);
-                      const vetUser = usersStorage.getById(vax.administeredBy);
-                      const status = getVaxStatus(vax);
-                      return (
-                        <TableRow key={vax.id}>
-                          <TableCell><p className="font-medium">{pet?.name}</p><p className="text-sm text-muted-foreground capitalize">{pet?.species}</p></TableCell>
-                          <TableCell><p className="font-medium">{vax.name}</p>{vax.batchNumber && <p className="text-xs text-muted-foreground">Batch: {vax.batchNumber}</p>}</TableCell>
-                          <TableCell>{isValid(new Date(vax.dateAdministered)) ? format(new Date(vax.dateAdministered), 'MMM d, yyyy') : '-'}</TableCell>
-                          <TableCell>{vax.nextDueDate && isValid(new Date(vax.nextDueDate)) ? format(new Date(vax.nextDueDate), 'MMM d, yyyy') : '-'}</TableCell>
-                          <TableCell><Badge variant={status === 'overdue' ? 'destructive' : status === 'due-soon' ? 'secondary' : 'outline'}>{status === 'overdue' ? 'Overdue' : status === 'due-soon' ? 'Due Soon' : 'Current'}</Badge></TableCell>
-                          <TableCell><p>{vetUser?.name || 'Veterinarian'}</p></TableCell>
-                          {canEdit && (
-                            <TableCell className="text-right">
-                              <div className="flex justify-end gap-1">
-                                <Button variant="ghost" size="icon" onClick={() => handleEdit(vax)}><Edit className="h-4 w-4" /></Button>
-                                <Button variant="ghost" size="icon" onClick={() => handleDelete(vax)} className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
-                              </div>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+              {renderTable(paginatedToday)}
+              {filteredTodayVaccinations.length > 0 && (
+                <PaginationControls
+                  currentPage={currentTodayPage}
+                  totalPages={totalTodayPages}
+                  onNext={nextTodayPage}
+                  onPrev={prevTodayPage}
+                />
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        {showInventory && (
-           <TabsContent value="inventory" className="space-y-6">
-              <Card>
-                 <CardContent className="p-0">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-[15%]">Vaccine Classification</TableHead>
-                          <TableHead>Batch / Lot Ref</TableHead>
-                          <TableHead>Origin Factory</TableHead>
-                          <TableHead>Expiration</TableHead>
-                          <TableHead>In Stock Vol.</TableHead>
-                          <TableHead>Availability Grid</TableHead>
-                          <TableHead className="text-right">Supply Chain Control</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {COMMON_VACCINES.filter(v => v !== 'Other').map(vaxName => {
-                           const item = inventory.find(i => i.name === vaxName);
-                           const stock = item?.stock || 0;
-                           const batchNumber = item?.batchNumber || '-';
-                           const origin = item?.origin || '-';
-                           return (
-                              <TableRow key={vaxName}>
-                                <TableCell className="font-medium">
-                                  {vaxName}
-                                  {item?.description && <p className="text-xs text-muted-foreground mt-1 truncate max-w-[120px]" title={item.description}>{item.description}</p>}
-                                </TableCell>
-                                <TableCell className="text-muted-foreground">{batchNumber}</TableCell>
-                                <TableCell className="text-muted-foreground">{origin}</TableCell>
-                                <TableCell className="text-muted-foreground">
-                                  {item?.expirationDate && isValid(new Date(item.expirationDate)) ? format(new Date(item.expirationDate), 'MMM d, yyyy') : '-'}
-                                </TableCell>
-                                <TableCell className="font-mono text-lg">{stock}</TableCell>
-                                <TableCell>
-                                  <Badge variant={stock === 0 ? 'destructive' : stock <= 10 ? 'secondary' : 'default'} className="px-3">
-                                    {stock === 0 ? 'Out of Stock' : stock <= 10 ? 'Low Supplies' : 'Warehouse Stable'}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <div className="flex justify-end gap-2">
-                                     <Button size="sm" variant="outline" onClick={() => handleUpdateInfo(vaxName, item?.batchNumber || '', item?.origin || '', item?.expirationDate || '', item?.description || '')}><Edit className="h-4 w-4 lg:mr-2" /><span className="hidden lg:inline">Edit Details</span></Button>
-                                     <Button size="sm" variant="outline" onClick={() => handleUpdateStock(vaxName)}><PackagePlus className="h-4 w-4 lg:mr-2" /><span className="hidden lg:inline">Stock</span></Button>
-                                  </div>
-                                </TableCell>
-                              </TableRow>
-                           )
-                        })}
-                      </TableBody>
-                    </Table>
-                 </CardContent>
-              </Card>
-
-              {/* Add Stock Dialog */}
-              <Dialog open={isStockDialogOpen} onOpenChange={setIsStockDialogOpen}>
-                 <DialogContent className="max-w-sm">
-                    <DialogHeader>
-                       <DialogTitle>Replenish Inventory</DialogTitle>
-                       <DialogDescription>Adding units to {stockFormData.name}</DialogDescription>
-                    </DialogHeader>
-                    <form onSubmit={submitStockUpdate}>
-                       <div className="space-y-4 py-4">
-                          <div className="space-y-2">
-                             <Label>Amount to Add</Label>
-                             <Input type="number" min="1" value={stockFormData.quantity} onChange={(e) => setStockFormData({...stockFormData, quantity: e.target.value})} placeholder="e.g. 50" required />
-                          </div>
-                       </div>
-                       <DialogFooter>
-                          <Button type="button" variant="outline" onClick={() => setIsStockDialogOpen(false)}>Cancel</Button>
-                          <Button type="submit">Deploy Shipment</Button>
-                       </DialogFooter>
-                    </form>
-                 </DialogContent>
-              </Dialog>
-
-              {/* Edit Info Dialog */}
-              <Dialog open={isInfoDialogOpen} onOpenChange={setIsInfoDialogOpen}>
-                 <DialogContent className="max-w-sm">
-                    <DialogHeader>
-                       <DialogTitle>Update Vaccine Origin Info</DialogTitle>
-                       <DialogDescription>Editing details for {infoFormData.name}</DialogDescription>
-                    </DialogHeader>
-                    <form onSubmit={submitInfoUpdate}>
-                       <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto px-1">
-                          <div className="space-y-2">
-                             <Label>Batch / Lot Number</Label>
-                             <Input value={infoFormData.batchNumber} onChange={(e) => setInfoFormData({...infoFormData, batchNumber: e.target.value})} placeholder="e.g. BATCH-2026-X" />
-                          </div>
-                          <div className="space-y-2">
-                             <Label>Manufacturer / Origin</Label>
-                             <Input value={infoFormData.origin} onChange={(e) => setInfoFormData({...infoFormData, origin: e.target.value})} placeholder="e.g. Zoetis, Boehringer Ingelheim" />
-                          </div>
-                          <div className="space-y-2">
-                             <Label>Expiration Date</Label>
-                             <Input type="date" value={infoFormData.expirationDate} onChange={(e) => setInfoFormData({...infoFormData, expirationDate: e.target.value})} />
-                          </div>
-                          <div className="space-y-2">
-                             <Label>Item Description / Medical Notes</Label>
-                             <Textarea value={infoFormData.description} onChange={(e) => setInfoFormData({...infoFormData, description: e.target.value})} placeholder="Contraindications, handling instructions..." rows={2} />
-                          </div>
-                       </div>
-                       <DialogFooter>
-                          <Button type="button" variant="outline" onClick={() => setIsInfoDialogOpen(false)}>Cancel</Button>
-                          <Button type="submit">Save Updates</Button>
-                       </DialogFooter>
-                    </form>
-                 </DialogContent>
-              </Dialog>
-           </TabsContent>
-        )}
+        <TabsContent value="history" className="space-y-6 mt-6">
+          <Card>
+            <CardContent className="p-0">
+              {renderTable(paginatedData)}
+              {filteredVaccinations.length > 0 && (
+                <PaginationControls
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onNext={nextPage}
+                  onPrev={prevPage}
+                />
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
     </div>
   );

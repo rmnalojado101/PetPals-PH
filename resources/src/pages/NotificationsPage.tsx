@@ -22,6 +22,8 @@ import {
 import { format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
 import type { PaginatedResponse } from '@/types';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 const NOTIFICATION_ICONS = {
   appointment: Calendar,
@@ -93,6 +95,8 @@ export default function NotificationsPage() {
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
+  const { paginatedData, currentPage, totalPages, nextPage, prevPage } = usePagination(notifications, 10);
+
   if (isLoading && notifications.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh]">
@@ -134,7 +138,7 @@ export default function NotificationsPage() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {notifications.map((notification) => {
+          {paginatedData.map((notification) => {
             const type = notification.type as keyof typeof NOTIFICATION_ICONS;
             const Icon = NOTIFICATION_ICONS[type] || Bell;
             const createdAt = notification.createdAt;
@@ -203,6 +207,14 @@ export default function NotificationsPage() {
               </Card>
             );
           })}
+          {notifications.length > 0 && (
+            <PaginationControls
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onNext={nextPage}
+              onPrev={prevPage}
+            />
+          )}
         </div>
       )}
     </div>

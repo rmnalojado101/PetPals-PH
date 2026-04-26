@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   medicalRecordsStorage, 
@@ -16,7 +16,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { Calendar } from '@/components/ui/calendar';
@@ -55,8 +56,48 @@ export default function MedicalRecordsPage() {
     temperature: '',
     followUpDate: '',
   });
-  const [page, setPage] = useState(1);
-  const PAGE_SIZE = 10;
+
+  const filteredOwners = useMemo(() => {
+    return owners.filter(o => 
+      o.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      o.email.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [owners, searchTerm]);
+
+  const {
+    paginatedData: ownersToShow,
+    currentPage: ownersPage,
+    totalPages: ownersTotalPages,
+    nextPage: ownersNextPage,
+    prevPage: ownersPrevPage
+  } = usePagination(filteredOwners, 10);
+
+  const filteredPets = useMemo(() => {
+    return pets.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [pets, searchTerm]);
+
+  const {
+    paginatedData: petsToShow,
+    currentPage: petsPage,
+    totalPages: petsTotalPages,
+    nextPage: petsNextPage,
+    prevPage: petsPrevPage
+  } = usePagination(filteredPets, 10);
+
+  const filteredRecords = useMemo(() => {
+    return records.filter(r => 
+      r.diagnosis.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.treatment.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [records, searchTerm]);
+
+  const {
+    paginatedData: recordsToShow,
+    currentPage: recordsPage,
+    totalPages: recordsTotalPages,
+    nextPage: recordsNextPage,
+    prevPage: recordsPrevPage
+  } = usePagination(filteredRecords, 10);
 
   useEffect(() => {
     if (!user) return;
@@ -75,10 +116,6 @@ export default function MedicalRecordsPage() {
       loadRecordsForPet(selectedPet.id);
     }
   }, [user, selectedOwnerId, selectedPet]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [selectedOwnerId, selectedPet, searchTerm]);
 
   const loadOwners = () => {
     if (!user) return;
@@ -257,13 +294,6 @@ export default function MedicalRecordsPage() {
 
   // LEVEL 1: Owners List
   const renderOwnersView = () => {
-    const filteredOwners = owners.filter(o => 
-      o.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      o.email.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-    const totalOwners = filteredOwners.length;
-    const totalPages = Math.max(1, Math.ceil(totalOwners / PAGE_SIZE));
-    const ownersToShow = filteredOwners.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
     return (
       <>
@@ -289,41 +319,14 @@ export default function MedicalRecordsPage() {
           ))}
         </TableBody>
       </Table>
-      {totalPages > 1 && (
-        <Pagination className="mt-4">
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationPrevious
-                onClick={(e) => {
-                  e.preventDefault();
-                  setPage((prev) => Math.max(prev - 1, 1));
-                }}
-              />
-            </PaginationItem>
-            {Array.from({ length: totalPages }, (_, index) => (
-              <PaginationItem key={index}>
-                <PaginationLink
-                  href="#"
-                  isActive={page === index + 1}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setPage(index + 1);
-                  }}
-                >
-                  {index + 1}
-                </PaginationLink>
-              </PaginationItem>
-            ))}
-            <PaginationItem>
-              <PaginationNext
-                onClick={(e) => {
-                  e.preventDefault();
-                  setPage((prev) => Math.min(prev + 1, totalPages));
-                }}
-              />
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
+      {filteredOwners.length > 0 && (
+        <PaginationControls
+          currentPage={ownersPage}
+          totalPages={ownersTotalPages}
+          onNext={ownersNextPage}
+          onPrev={ownersPrevPage}
+          className="mt-4"
+        />
       )}
     </>
   );
@@ -331,10 +334,6 @@ export default function MedicalRecordsPage() {
 
   // LEVEL 2: Pets List
   const renderPetsView = () => {
-    const filteredPets = pets.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
-    const totalPets = filteredPets.length;
-    const totalPages = Math.max(1, Math.ceil(totalPets / PAGE_SIZE));
-    const petsToShow = filteredPets.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
     return (
       <>
@@ -363,41 +362,14 @@ export default function MedicalRecordsPage() {
           )}
         </TableBody>
       </Table>
-      {totalPages > 1 && (
-        <Pagination className="mt-4">
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationPrevious
-                onClick={(e) => {
-                  e.preventDefault();
-                  setPage((prev) => Math.max(prev - 1, 1));
-                }}
-              />
-            </PaginationItem>
-            {Array.from({ length: totalPages }, (_, index) => (
-              <PaginationItem key={index}>
-                <PaginationLink
-                  href="#"
-                  isActive={page === index + 1}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setPage(index + 1);
-                  }}
-                >
-                  {index + 1}
-                </PaginationLink>
-              </PaginationItem>
-            ))}
-            <PaginationItem>
-              <PaginationNext
-                onClick={(e) => {
-                  e.preventDefault();
-                  setPage((prev) => Math.min(prev + 1, totalPages));
-                }}
-              />
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
+      {filteredPets.length > 0 && (
+        <PaginationControls
+          currentPage={petsPage}
+          totalPages={petsTotalPages}
+          onNext={petsNextPage}
+          onPrev={petsPrevPage}
+          className="mt-4"
+        />
       )}
     </>
   );
@@ -405,13 +377,6 @@ export default function MedicalRecordsPage() {
 
   // LEVEL 3: Medical Records List
   const renderRecordsView = () => {
-    const filteredRecords = records.filter(r => 
-      r.diagnosis.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.treatment.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-    const totalRecords = filteredRecords.length;
-    const totalPages = Math.max(1, Math.ceil(totalRecords / PAGE_SIZE));
-    const recordsToShow = filteredRecords.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
     return (
       <>
@@ -452,41 +417,14 @@ export default function MedicalRecordsPage() {
           )}
         </TableBody>
       </Table>
-      {totalPages > 1 && (
-        <Pagination className="mt-4">
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationPrevious
-                onClick={(e) => {
-                  e.preventDefault();
-                  setPage((prev) => Math.max(prev - 1, 1));
-                }}
-              />
-            </PaginationItem>
-            {Array.from({ length: totalPages }, (_, index) => (
-              <PaginationItem key={index}>
-                <PaginationLink
-                  href="#"
-                  isActive={page === index + 1}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setPage(index + 1);
-                  }}
-                >
-                  {index + 1}
-                </PaginationLink>
-              </PaginationItem>
-            ))}
-            <PaginationItem>
-              <PaginationNext
-                onClick={(e) => {
-                  e.preventDefault();
-                  setPage((prev) => Math.min(prev + 1, totalPages));
-                }}
-              />
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
+      {filteredRecords.length > 0 && (
+        <PaginationControls
+          currentPage={recordsPage}
+          totalPages={recordsTotalPages}
+          onNext={recordsNextPage}
+          onPrev={recordsPrevPage}
+          className="mt-4"
+        />
       )}
     </>
   );

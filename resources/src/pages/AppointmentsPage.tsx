@@ -53,6 +53,8 @@ import {
 import { addMonths, format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
 import type { PaginatedResponse } from '@/types';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 
 const TIME_SLOTS = [
   '08:00', '09:00', '10:00', '11:00', '12:00',
@@ -302,6 +304,22 @@ export default function AppointmentsPage() {
     const appointmentDateKey = getAppointmentDateKey(appointment);
     return appointmentDateKey ? appointmentDateKey < todayKey : false;
   });
+
+  const {
+    paginatedData: paginatedUpcoming,
+    currentPage: upcomingPage,
+    totalPages: upcomingTotalPages,
+    nextPage: upcomingNext,
+    prevPage: upcomingPrev
+  } = usePagination(upcomingAppointments, 10);
+
+  const {
+    paginatedData: paginatedPast,
+    currentPage: pastPage,
+    totalPages: pastTotalPages,
+    nextPage: pastNext,
+    prevPage: pastPrev
+  } = usePagination(pastAppointments, 10);
 
   const renderAppointmentRow = (apt: Appointment) => {
     const petName = apt.pet?.name || 'Animal';
@@ -796,9 +814,17 @@ export default function AppointmentsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {upcomingAppointments.map(renderAppointmentRow)}
+                    {paginatedUpcoming.map(renderAppointmentRow)}
                   </TableBody>
                 </Table>
+              )}
+              {upcomingAppointments.length > 0 && (
+                <PaginationControls
+                  currentPage={upcomingPage}
+                  totalPages={upcomingTotalPages}
+                  onNext={upcomingNext}
+                  onPrev={upcomingPrev}
+                />
               )}
             </CardContent>
           </Card>
@@ -825,9 +851,17 @@ export default function AppointmentsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pastAppointments.map(renderAppointmentRow)}
+                    {paginatedPast.map(renderAppointmentRow)}
                   </TableBody>
                 </Table>
+              )}
+              {pastAppointments.length > 0 && (
+                <PaginationControls
+                  currentPage={pastPage}
+                  totalPages={pastTotalPages}
+                  onNext={pastNext}
+                  onPrev={pastPrev}
+                />
               )}
             </CardContent>
           </Card>

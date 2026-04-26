@@ -36,9 +36,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { usePagination } from '@/hooks/usePagination';
+import { PaginationControls } from '@/components/ui/pagination-controls';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Plus, 
@@ -74,8 +75,6 @@ export default function PetsPage() {
   const [speciesFilter, setSpeciesFilter] = useState<string>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingPet, setEditingPet] = useState<Pet | null>(null);
-  const [page, setPage] = useState(1);
-  const PAGE_SIZE = 10;
   
   // Form state
   const [formData, setFormData] = useState({
@@ -216,13 +215,7 @@ export default function PetsPage() {
     return matchesSearch && matchesSpecies;
   });
 
-  const totalPets = filteredPets.length;
-  const totalPages = Math.max(1, Math.ceil(totalPets / PAGE_SIZE));
-  const petsToShow = filteredPets.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  useEffect(() => {
-    setPage(1);
-  }, [searchTerm, speciesFilter, ownerParam]);
+  const { paginatedData, currentPage, totalPages, nextPage, prevPage } = usePagination(filteredPets, 10);
 
   const getSpeciesEmoji = (species: string) => {
     return SPECIES_OPTIONS.find(s => s.value === species)?.emoji || '🐾';
@@ -475,7 +468,7 @@ export default function PetsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {petsToShow.map((pet) => {
+                {paginatedData.map((pet) => {
                   const owner = usersStorage.getById(pet.ownerId);
                   return (
                     <TableRow key={pet.id}>
@@ -555,43 +548,13 @@ export default function PetsPage() {
                 })}
               </TableBody>
             </Table>
-            {totalPages > 1 && (
-              <div className="p-4 pt-0">
-                <Pagination>
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPrevious
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setPage((prev) => Math.max(prev - 1, 1));
-                        }}
-                      />
-                    </PaginationItem>
-                    {Array.from({ length: totalPages }, (_, index) => (
-                      <PaginationItem key={index}>
-                        <PaginationLink
-                          href="#"
-                          isActive={page === index + 1}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setPage(index + 1);
-                          }}
-                        >
-                          {index + 1}
-                        </PaginationLink>
-                      </PaginationItem>
-                    ))}
-                    <PaginationItem>
-                      <PaginationNext
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setPage((prev) => Math.min(prev + 1, totalPages));
-                        }}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
-              </div>
+            {filteredPets.length > 0 && (
+              <PaginationControls
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onNext={nextPage}
+                onPrev={prevPage}
+              />
             )}
           </CardContent>
         </Card>
