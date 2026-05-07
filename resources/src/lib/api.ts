@@ -110,7 +110,9 @@ async function fetchFromApi<T>(endpoint: string, options: JsonRequestInit = {}):
 
   const requestOptions: RequestInit = { ...options, headers: requestHeaders, body: options.body as BodyInit | null | undefined };
 
-  if (requestOptions.body && typeof requestOptions.body !== 'string') {
+  if (requestOptions.body instanceof FormData) {
+    requestHeaders.delete('Content-Type');
+  } else if (requestOptions.body && typeof requestOptions.body !== 'string') {
     requestOptions.body = JSON.stringify(convertKeysToSnakeCase(requestOptions.body));
   }
 
@@ -283,13 +285,13 @@ export const api = {
     return fetchFromApi<MedicalRecord[] | PaginatedResponse<MedicalRecord>>(`/medical-records${query}`);
   },
   getPetHistory: (petId: string | number) => fetchFromApi<MedicalRecord[]>(`/pets/${petId}/medical-history`),
-  createMedicalRecord: (data: Record<string, unknown>) => fetchFromApi<MedicalRecord>('/medical-records', {
+  createMedicalRecord: (data: Record<string, unknown> | FormData) => fetchFromApi<MedicalRecord>('/medical-records', {
     method: 'POST',
     body: data
   }),
-  updateMedicalRecord: (id: string | number, data: Record<string, unknown>) => fetchFromApi<MedicalRecord>(`/medical-records/${id}`, {
-    method: 'PUT',
-    body: data
+  updateMedicalRecord: (id: string | number, data: Record<string, unknown> | FormData) => fetchFromApi<MedicalRecord>(`/medical-records/${id}`, {
+    method: 'POST', // Laravel uses POST with _method=PUT for FormData
+    body: data instanceof FormData ? (() => { data.append('_method', 'PUT'); return data; })() : { ...data, _method: 'PUT' }
   }),
   deleteMedicalRecord: (id: string | number) => fetchFromApi<void>(`/medical-records/${id}`, {
     method: 'DELETE'
@@ -356,6 +358,9 @@ export const api = {
   updateInventory: (id: string | number, data: Record<string, unknown>) => fetchFromApi<VaccineInventory>(`/inventory/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data)
+  }),
+  deleteInventory: (id: string | number) => fetchFromApi<void>(`/inventory/${id}`, {
+    method: 'DELETE'
   }),
 
   // Notifications

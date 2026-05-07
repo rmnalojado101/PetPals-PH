@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Plus, Search, Calendar as CalendarIcon, Eye, Edit, Trash2, Stethoscope, Download, ArrowLeft, Users, Heart } from 'lucide-react';
+import { Plus, Search, Calendar as CalendarIcon, Eye, Edit, Trash2, Stethoscope, Download, ArrowLeft, Users, Heart, Paperclip } from 'lucide-react';
 import { format, isValid } from 'date-fns';
 
 export default function MedicalRecordsPage() {
@@ -42,6 +42,7 @@ export default function MedicalRecordsPage() {
   
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [clinicVets, setClinicVets] = useState<Veterinarian[]>([]);
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [formData, setFormData] = useState({
     diagnosis: '',
     treatment: '',
@@ -183,42 +184,43 @@ export default function MedicalRecordsPage() {
       veterinarianId: '',
     });
     setSelectedDate(new Date());
+    setAttachmentFile(null);
     setEditingRecord(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPet || !formData.diagnosis || !formData.treatment) {
-      toast({ title: 'Missing Information', description: 'Please fill in required fields.', variant: 'destructive' });
+    if (!selectedPet || (!formData.diagnosis && !formData.treatment && !attachmentFile)) {
+      toast({ title: 'Missing Information', description: 'Please provide either Diagnosis/Treatment or upload a file.', variant: 'destructive' });
       return;
     }
 
     const petId = (selectedPet as any).id?.toString();
-    const vetId = (selectedPet as any).veterinarianId ||
-      (selectedPet as any).owner?.id ||
-      null;
 
     try {
-      if (editingRecord) {
-        await api.updateMedicalRecord((editingRecord as any).id, {
-          diagnosis: formData.diagnosis,
-          treatment: formData.treatment,
-          prescription: formData.prescription || null,
-          lab_results: formData.labResults || null,
-          notes: formData.notes || null,
-          weight: formData.weight ? parseFloat(formData.weight) : null,
-          temperature: formData.temperature ? parseFloat(formData.temperature) : null,
-          follow_up_date: formData.followUpDate || null,
-          veterinarian_id: formData.veterinarianId || undefined,
-        });
-        toast({ title: 'Record Updated', description: 'Medical record has been updated.' });
+      const isFormData = !!attachmentFile;
+      let payload: Record<string, any> | FormData;
+
+      if (isFormData) {
+        payload = new FormData();
+        payload.append('pet_id', petId);
+        payload.append('record_date', format(selectedDate, 'yyyy-MM-dd'));
+        if (formData.diagnosis) payload.append('diagnosis', formData.diagnosis);
+        if (formData.treatment) payload.append('treatment', formData.treatment);
+        if (formData.prescription) payload.append('prescription', formData.prescription);
+        if (formData.labResults) payload.append('lab_results', formData.labResults);
+        if (formData.notes) payload.append('notes', formData.notes);
+        if (formData.weight) payload.append('weight', formData.weight);
+        if (formData.temperature) payload.append('temperature', formData.temperature);
+        if (formData.followUpDate) payload.append('follow_up_date', formData.followUpDate);
+        if (formData.veterinarianId) payload.append('veterinarian_id', formData.veterinarianId);
+        if (attachmentFile) payload.append('attachment', attachmentFile);
       } else {
-        // For vet_clinic creating a record, veterinarian_id must be provided
-        await api.createMedicalRecord({
+        payload = {
           pet_id: petId,
           record_date: format(selectedDate, 'yyyy-MM-dd'),
-          diagnosis: formData.diagnosis,
-          treatment: formData.treatment,
+          diagnosis: formData.diagnosis || null,
+          treatment: formData.treatment || null,
           prescription: formData.prescription || null,
           lab_results: formData.labResults || null,
           notes: formData.notes || null,
@@ -226,7 +228,14 @@ export default function MedicalRecordsPage() {
           temperature: formData.temperature ? parseFloat(formData.temperature) : null,
           follow_up_date: formData.followUpDate || null,
           veterinarian_id: formData.veterinarianId || undefined,
-        });
+        };
+      }
+
+      if (editingRecord) {
+        await api.updateMedicalRecord((editingRecord as any).id, payload);
+        toast({ title: 'Record Updated', description: 'Medical record has been updated.' });
+      } else {
+        await api.createMedicalRecord(payload);
         toast({ title: 'Record Created', description: 'Medical record has been saved for ' + selectedPet.name });
       }
       await loadRecordsForPet(petId);
@@ -241,8 +250,9 @@ export default function MedicalRecordsPage() {
   const handleEdit = (record: MedicalRecord) => {
     const r = record as any;
     setEditingRecord(record);
+    setAttachmentFile(null);
     setFormData({
-      diagnosis: record.diagnosis, treatment: record.treatment, prescription: record.prescription || '',
+      diagnosis: record.diagnosis || '', treatment: record.treatment || '', prescription: record.prescription || '',
       labResults: r.labResults || record.labResults || '', notes: record.notes || '', weight: record.weight?.toString() || '',
       temperature: record.temperature?.toString() || '', followUpDate: r.followUpDate || record.followUpDate || '',
       veterinarianId: r.veterinarianId?.toString() || '',
@@ -313,7 +323,44 @@ export default function MedicalRecordsPage() {
       </html>
     `;
     const printWindow = window.open('', '_blank');
-    if (printWindow) { printWindow.document.write(content); printWindow.document.close(); printWindow.print(); }
+    if (printWindow) {
+      printWindow.document.write(content);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
+  const handleDownloadAttachment = async (record: MedicalRecord) => {
+    try {
+      const response = await fetch(`/api/medical-records/${(record as any).id}/download-attachment`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+        }
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to download attachment');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      
+      const disposition = response.headers.get('content-disposition');
+      let filename = `record-attachment-${(record as any).id}`;
+      if (disposition && disposition.indexOf('filename=') !== -1) {
+          filename = disposition.split('filename=')[1].replace(/"/g, '');
+      }
+      
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      toast({ title: 'Download Failed', description: err?.message || 'Could not download file', variant: 'destructive' });
+    }
   };
 
   const getBreadcrumbs = () => {
@@ -438,6 +485,11 @@ export default function MedicalRecordsPage() {
                 <TableCell>{(record as any).veterinarian?.name || (record as any).veterinarianName || 'Unknown Vet'}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
+                    {(record as any).attachmentPath && (
+                      <Button variant="ghost" size="icon" onClick={() => handleDownloadAttachment(record)} title="Download Attachment">
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" onClick={() => setViewingRecord(record)}><Eye className="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" onClick={() => handleExportPDF(record)}><Download className="h-4 w-4" /></Button>
                     {canEdit && (
@@ -500,7 +552,7 @@ export default function MedicalRecordsPage() {
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{editingRecord ? 'Edit Record' : `New Medical Record for ${selectedPet.name}`}</DialogTitle>
-                <DialogDescription>Enter the consultation details below</DialogDescription>
+                <DialogDescription>Enter the consultation details below or upload a document</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleSubmit}>
                 <div className="grid gap-4 py-4">
@@ -540,8 +592,17 @@ export default function MedicalRecordsPage() {
                     <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.1" value={formData.weight} onChange={(e) => setFormData({ ...formData, weight: e.target.value })} /></div>
                     <div className="space-y-2"><Label>Temperature (°C)</Label><Input type="number" step="0.1" value={formData.temperature} onChange={(e) => setFormData({ ...formData, temperature: e.target.value })} /></div>
                   </div>
-                  <div className="space-y-2"><Label>Diagnosis *</Label><Textarea value={formData.diagnosis} onChange={(e) => setFormData({ ...formData, diagnosis: e.target.value })} rows={2} required /></div>
-                  <div className="space-y-2"><Label>Treatment *</Label><Textarea value={formData.treatment} onChange={(e) => setFormData({ ...formData, treatment: e.target.value })} rows={2} required /></div>
+                  <div className="space-y-2">
+                    <Label>Attachment (PDF/Word)</Label>
+                    <Input 
+                      type="file" 
+                      accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)}
+                    />
+                    <p className="text-xs text-muted-foreground">Optional. Uploading a file replaces the need to type the Diagnosis and Treatment.</p>
+                  </div>
+                  <div className="space-y-2"><Label>Diagnosis</Label><Textarea value={formData.diagnosis} onChange={(e) => setFormData({ ...formData, diagnosis: e.target.value })} rows={2} /></div>
+                  <div className="space-y-2"><Label>Treatment</Label><Textarea value={formData.treatment} onChange={(e) => setFormData({ ...formData, treatment: e.target.value })} rows={2} /></div>
                   <div className="space-y-2"><Label>Prescription</Label><Textarea value={formData.prescription} onChange={(e) => setFormData({ ...formData, prescription: e.target.value })} rows={2} /></div>
                   <div className="space-y-2"><Label>Additional Notes</Label><Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} /></div>
                 </div>
@@ -591,7 +652,12 @@ export default function MedicalRecordsPage() {
                 <div><Label className="text-muted-foreground">Diagnosis</Label><p>{viewingRecord.diagnosis}</p></div>
                 <div><Label className="text-muted-foreground">Treatment</Label><p>{viewingRecord.treatment}</p></div>
                 {viewingRecord.prescription && <div><Label className="text-muted-foreground">Prescription</Label><p>{viewingRecord.prescription}</p></div>}
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-2">
+                  {(viewingRecord as any).attachmentPath && (
+                    <Button variant="outline" onClick={() => handleDownloadAttachment(viewingRecord)}>
+                      <Download className="mr-2 h-4 w-4" /> Download Attachment
+                    </Button>
+                  )}
                   <Button variant="outline" onClick={() => handleExportPDF(viewingRecord)}><Download className="mr-2 h-4 w-4" /> Print / Export</Button>
                 </div>
               </div>

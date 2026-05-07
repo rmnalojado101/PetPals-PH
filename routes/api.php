@@ -45,6 +45,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::apiResource('medical-records', MedicalRecordController::class);
     Route::get('/medical-records/{medicalRecord}/pdf', [MedicalRecordController::class, 'exportPdf']);
+    Route::get('/medical-records/{medicalRecord}/download-attachment', [MedicalRecordController::class, 'downloadAttachment']);
     Route::get('/pets/{petId}/medical-history', [MedicalRecordController::class, 'petHistory']);
 
     Route::apiResource('vaccinations', VaccinationController::class);
@@ -73,4 +74,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/inventory', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'store']);
     Route::post('/inventory/upsert', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'upsert']);
     Route::put('/inventory/{vaccineInventory}', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'update']);
+    Route::delete('/inventory/{vaccineInventory}', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'destroy']);
 });

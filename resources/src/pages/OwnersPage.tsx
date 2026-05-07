@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { usersStorage, petsStorage, appointmentsStorage, veterinariansStorage } from '@/lib/storage';
+import { api } from '@/lib/api';
 import type { User } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,61 +19,43 @@ import {
 import { usePagination } from '@/hooks/usePagination';
 import { PaginationControls } from '@/components/ui/pagination-controls';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Search,  
+import {
+  Search,
   Users,
-  Eye
+  Eye,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function OwnersPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  
+
   const [owners, setOwners] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     loadOwners();
   }, [user]);
 
-  const loadOwners = () => {
+  const loadOwners = async () => {
     if (!user) return;
-    
-    // Admin sees everyone
-    if (user.role === 'admin') {
-      setOwners(usersStorage.getByRole('owner'));
-      return;
+    setIsLoading(true);
+    try {
+      // api.getOwners() hits /api/owners which applies server-side role-based filtering:
+      // - admin → all owners
+      // - vet_clinic → only owners who have an appointment with this clinic's vets
+      // Each owner object already includes a `pets` array (eager-loaded by backend)
+      const data = await api.getOwners();
+      setOwners(data);
+    } catch (error) {
+      console.error('Failed to load owners from API:', error);
+    } finally {
+      setIsLoading(false);
     }
-
-    // Vet Clinics only see owners who have booked appointments with their clinic
-    if (user.role === 'vet_clinic') {
-      const clinicVets = veterinariansStorage.getByClinic(user.id).map(v => v.id);
-      const relevantOwnerIds = new Set<string>();
-      
-      appointmentsStorage.getAll().forEach(a => {
-        if (clinicVets.includes(a.veterinarianId)) {
-          relevantOwnerIds.add(a.ownerId);
-        }
-      });
-      
-      const filteredOwners = usersStorage.getAll().filter(u => relevantOwnerIds.has(u.id));
-      setOwners(filteredOwners);
-      return;
-    }
-
-    // Veterinarians only see owners who booked specifically with them
-    if (user.role === 'veterinarian' as any) {
-      const relevantOwnerIds = new Set<string>();
-      appointmentsStorage.getByVet(user.id).forEach(a => relevantOwnerIds.add(a.ownerId));
-      setOwners(usersStorage.getAll().filter(u => relevantOwnerIds.has(u.id)));
-      return;
-    }
-    
-    setOwners([]);
   };
 
-  const filteredOwners = owners.filter(owner => {
+  const filteredOwners = owners.filter((owner) => {
     return (
       owner.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       owner.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -81,7 +63,8 @@ export default function OwnersPage() {
     );
   });
 
-  const { paginatedData, currentPage, totalPages, nextPage, prevPage } = usePagination(filteredOwners, 10);
+  const { paginatedData, currentPage, totalPages, nextPage, prevPage } =
+    usePagination(filteredOwners, 10);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -110,14 +93,19 @@ export default function OwnersPage() {
       {/* Owners Table */}
       <Card>
         <CardContent className="p-0">
-          {filteredOwners.length === 0 ? (
+          {isLoading ? (
+            <div className="py-16 text-center">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto mb-4" />
+              <p className="text-muted-foreground">Loading owners...</p>
+            </div>
+          ) : filteredOwners.length === 0 ? (
             <div className="py-16 text-center">
               <Users className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
               <h3 className="text-lg font-semibold mb-2">No owners found</h3>
               <p className="text-muted-foreground">
-                {searchTerm 
-                  ? 'Try adjusting your search' 
-                  : 'No pet owners registered yet'}
+                {searchTerm
+                  ? 'Try adjusting your search'
+                  : 'No pet owners with appointments at your clinic yet'}
               </p>
             </div>
           ) : (
@@ -134,7 +122,9 @@ export default function OwnersPage() {
                 </TableHeader>
                 <TableBody>
                   {paginatedData.map((owner) => {
-                    const petCount = petsStorage.getByOwner(owner.id).length;
+                    // The backend eager-loads pets[] on each owner
+                    const petsArr = (owner as any).pets;
+                    const petCount = Array.isArray(petsArr) ? petsArr.length : 0;
                     return (
                       <TableRow key={owner.id}>
                         <TableCell>

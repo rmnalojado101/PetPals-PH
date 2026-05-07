@@ -17,6 +17,7 @@ class ClinicSettings extends Model
         'opening_hours',
         'logo',
         'vaccine_types',
+        'medical_record_template',
     ];
 
     protected $casts = [

@@ -50,10 +50,30 @@ class VaccineInventoryController extends Controller
             'stock' => 'required|integer',
         ]);
 
-        $inventory = VaccineInventory::updateOrCreate(
-            ['clinic_id' => $user->id, 'name' => $validated['name']],
-            $validated
-        );
+        $query = VaccineInventory::where('clinic_id', $user->id)
+            ->where('name', $validated['name']);
+            
+        if (isset($validated['batch_number'])) {
+            $query->where('batch_number', $validated['batch_number']);
+        } else {
+            $query->whereNull('batch_number');
+        }
+        
+        $inventory = $query->first();
+
+        if ($inventory) {
+            $inventory->stock += $validated['stock'];
+            if (isset($validated['origin'])) $inventory->origin = $validated['origin'];
+            if (isset($validated['expiration_date'])) $inventory->expiration_date = $validated['expiration_date'];
+            if (isset($validated['description'])) $inventory->description = $validated['description'];
+            $inventory->save();
+            return response()->json($inventory, 200);
+        }
+
+        $inventory = VaccineInventory::create(array_merge(
+            $validated,
+            ['clinic_id' => $user->id]
+        ));
 
         return response()->json($inventory, 201);
     }
@@ -101,5 +121,18 @@ class VaccineInventoryController extends Controller
         $vaccineInventory->update($validated);
 
         return response()->json($vaccineInventory);
+    }
+
+    public function destroy(Request $request, VaccineInventory $vaccineInventory)
+    {
+        $user = $request->user();
+
+        if ($user->role !== 'vet_clinic' || $vaccineInventory->clinic_id !== $user->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $vaccineInventory->delete();
+
+        return response()->json(['message' => 'Inventory deleted successfully']);
     }
 }

@@ -22,6 +22,7 @@ class MedicalRecord extends Model
         'weight',
         'temperature',
         'follow_up_date',
+        'attachment_path',
     ];
 
     protected $casts = [
@@ -59,5 +60,12 @@ class MedicalRecord extends Model
     public function scopeRecent($query, int $days = 30)
     {
         return $query->where('record_date', '>=', now()->subDays($days));
+    }
+
+    protected $appends = ['attachment_url'];
+
+    public function getAttachmentUrlAttribute()
+    {
+        return $this->attachment_path ? '/storage/' . $this->attachment_path : null;
     }
 }

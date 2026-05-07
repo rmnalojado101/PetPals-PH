@@ -227,18 +227,16 @@ class VaccinationController extends Controller
 
         $inventory = VaccineInventory::where('clinic_id', $veterinarian->clinicId)
             ->where('name', $vaccineName)
+            ->where('stock', '>', 0)
+            ->orderByRaw('expiration_date IS NULL')
+            ->orderBy('expiration_date', 'asc')
+            ->orderBy('id', 'asc')
             ->lockForUpdate()
             ->first();
 
         if (!$inventory) {
             throw new HttpResponseException(
-                response()->json(['message' => "No stock record found for {$vaccineName}"], 422)
-            );
-        }
-
-        if ($inventory->stock <= 0) {
-            throw new HttpResponseException(
-                response()->json(['message' => "No stock left for {$vaccineName}"], 422)
+                response()->json(['message' => "No stock left or found for {$vaccineName}"], 422)
             );
         }
 

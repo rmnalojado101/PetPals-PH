@@ -94,14 +94,15 @@ class MedicalRecordController extends Controller
                 'exists:veterinarians,id',
             ],
             'record_date' => 'required|date',
-            'diagnosis' => 'required|string',
-            'treatment' => 'required|string',
+            'diagnosis' => 'nullable|string',
+            'treatment' => 'nullable|string',
             'prescription' => 'nullable|string',
             'lab_results' => 'nullable|string',
             'notes' => 'nullable|string',
             'weight' => 'nullable|numeric|min:0',
             'temperature' => 'nullable|numeric|min:30|max:45',
             'follow_up_date' => 'nullable|date|after:today',
+            'attachment' => 'nullable|file|mimes:pdf,doc,docx|max:10240', // 10MB max
         ]);
 
         $validated['veterinarian_id'] = $linkedVetId ?? $validated['veterinarian_id'];
@@ -122,6 +123,11 @@ class MedicalRecordController extends Controller
             if ((int) $appointment->veterinarian_id !== (int) $validated['veterinarian_id']) {
                 return response()->json(['message' => 'Selected appointment does not match the chosen veterinarian'], 422);
             }
+        }
+
+        if ($request->hasFile('attachment')) {
+            $path = $request->file('attachment')->store('medical_attachments', 'public');
+            $validated['attachment_path'] = $path;
         }
 
         $record = MedicalRecord::create($validated);
@@ -158,14 +164,15 @@ class MedicalRecordController extends Controller
 
         $validated = $request->validate([
             'veterinarian_id' => 'sometimes|exists:veterinarians,id',
-            'diagnosis' => 'sometimes|string',
-            'treatment' => 'sometimes|string',
+            'diagnosis' => 'nullable|string',
+            'treatment' => 'nullable|string',
             'prescription' => 'nullable|string',
             'lab_results' => 'nullable|string',
             'notes' => 'nullable|string',
             'weight' => 'nullable|numeric|min:0',
             'temperature' => 'nullable|numeric|min:30|max:45',
             'follow_up_date' => 'nullable|date',
+            'attachment' => 'nullable|file|mimes:pdf,doc,docx|max:10240',
         ]);
 
         if (isset($validated['veterinarian_id'])) {
@@ -178,6 +185,15 @@ class MedicalRecordController extends Controller
             if ($user->linkedVeterinarianId() && (int) $validated['veterinarian_id'] !== (int) $user->linkedVeterinarianId()) {
                 return response()->json(['message' => 'You can only manage your own veterinarian profile'], 422);
             }
+        }
+
+        if ($request->hasFile('attachment')) {
+            // Delete old attachment if it exists
+            if ($medicalRecord->attachment_path) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($medicalRecord->attachment_path);
+            }
+            $path = $request->file('attachment')->store('medical_attachments', 'public');
+            $validated['attachment_path'] = $path;
         }
 
         $medicalRecord->update($validated);
@@ -225,6 +241,26 @@ class MedicalRecordController extends Controller
         $pdf = Pdf::loadView('pdf.medical-record', compact('record'));
 
         return $pdf->download("medical-record-{$record->id}.pdf");
+    }
+
+    public function downloadAttachment(Request $request, MedicalRecord $medicalRecord)
+    {
+        $user = $request->user();
+
+        // Security check (reusing same logic as exportPdf)
+        if ($user->isOwner() && $medicalRecord->pet->owner_id !== $user->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        if (!$medicalRecord->attachment_path) {
+            return response()->json(['message' => 'No attachment found for this record.'], 404);
+        }
+
+        if (!\Illuminate\Support\Facades\Storage::disk('public')->exists($medicalRecord->attachment_path)) {
+            return response()->json(['message' => 'File not found on server.'], 404);
+        }
+
+        return \Illuminate\Support\Facades\Storage::disk('public')->download($medicalRecord->attachment_path);
     }
 
     public function petHistory(Request $request, $petId)

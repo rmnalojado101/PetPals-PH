@@ -20,8 +20,8 @@ export default function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
   
   // Login form
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
+  const [loginEmail, setLoginEmail] = useState('admin@petpalsph.com');
+  const [loginPassword, setLoginPassword] = useState('admin123');
   
   // Register form
   const [registerRole, setRegisterRole] = useState<UserRole>('owner');

@@ -107,14 +107,16 @@ export interface MedicalRecord {
   veterinarianId: string;
   date?: string;
   recordDate?: string;
-  diagnosis: string;
-  treatment: string;
+  diagnosis?: string;
+  treatment?: string;
   prescription?: string;
   labResults?: string;
   notes?: string;
   weight?: number;
   temperature?: number;
   followUpDate?: string;
+  attachmentPath?: string;
+  attachmentUrl?: string;
   pet?: Pet;
   owner?: User;
   veterinarian?: User | Veterinarian;

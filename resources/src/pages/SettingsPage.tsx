@@ -82,19 +82,51 @@ export default function SettingsPage() {
   const [inventory, setInventory] = useState<VaccineInventory[]>([]);
   const [isInventoryLoading, setIsInventoryLoading] = useState(true);
   const [isStockDialogOpen, setIsStockDialogOpen] = useState(false);
-  const [stockFormData, setStockFormData] = useState({ name: '', quantity: '' });
+  const [stockFormData, setStockFormData] = useState({ name: '', quantity: '', batchNumber: '', origin: '', expirationDate: '', description: '' });
   const [isInfoDialogOpen, setIsInfoDialogOpen] = useState(false);
   const [infoFormData, setInfoFormData] = useState(EMPTY_INFO_FORM);
+  const [isManageBatchesDialogOpen, setIsManageBatchesDialogOpen] = useState(false);
+  const [selectedVaccineNameForBatches, setSelectedVaccineNameForBatches] = useState<string | null>(null);
+
+  const selectedBatches = (() => {
+    if (!selectedVaccineNameForBatches) return [];
+    return inventory.filter(i => i.name?.toLowerCase() === selectedVaccineNameForBatches.toLowerCase())
+      .sort((a, b) => {
+        const dateA = a.expirationDate ? new Date(a.expirationDate).getTime() : Number.MAX_SAFE_INTEGER;
+        const dateB = b.expirationDate ? new Date(b.expirationDate).getTime() : Number.MAX_SAFE_INTEGER;
+        return dateA - dateB;
+      });
+  })();
 
   const { paginatedData: paginatedVets, currentPage: vetsPage, totalPages: vetsTotalPages, nextPage: vetsNextPage, prevPage: vetsPrevPage } = usePagination(vets, 10);
 
-  const inventoryVaccineNames = [...(settings?.vaccineTypes || []), ...inventory.map((item) => item.name)]
-    .filter(
-      (name, index, allNames) =>
-        allNames.findIndex((candidate) => candidate.toLowerCase() === name.toLowerCase()) === index
-    );
+  const allInventoryRows = (() => {
+    const rows: any[] = [];
+    const baseNames = [...(settings?.vaccineTypes || []), ...inventory.map((item) => item.name)]
+      .filter(Boolean)
+      .filter((name, index, allNames) => allNames.findIndex((c) => c?.toLowerCase() === name?.toLowerCase()) === index);
+      
+    for (const vName of baseNames) {
+      const batches = inventory.filter(i => i.name?.toLowerCase() === vName?.toLowerCase())
+        .sort((a, b) => {
+          const dateA = a.expirationDate ? new Date(a.expirationDate).getTime() : Number.MAX_SAFE_INTEGER;
+          const dateB = b.expirationDate ? new Date(b.expirationDate).getTime() : Number.MAX_SAFE_INTEGER;
+          return dateA - dateB;
+        });
+      
+      const totalStock = batches.reduce((sum, b) => sum + (b.stock || 0), 0);
+      
+      rows.push({
+        id: `group-${vName}`,
+        vaccineName: vName,
+        totalStock,
+        batches,
+      });
+    }
+    return rows;
+  })();
 
-  const { paginatedData: paginatedInventory, currentPage: invPage, totalPages: invTotalPages, nextPage: invNextPage, prevPage: invPrevPage } = usePagination(inventoryVaccineNames, 10);
+  const { paginatedData: paginatedInventory, currentPage: invPage, totalPages: invTotalPages, nextPage: invNextPage, prevPage: invPrevPage } = usePagination(allInventoryRows, 10);
 
   useEffect(() => {
     const requestedTab = new URLSearchParams(location.search).get('tab');
@@ -225,6 +257,19 @@ export default function SettingsPage() {
     }
   };
 
+  const handleDeleteBatch = async (id: string | number) => {
+    if (!confirm('Are you sure you want to permanently delete this stock batch?')) return;
+
+    try {
+      await api.deleteInventory(id);
+      toast({ title: 'Success', description: 'Batch removed successfully.' });
+      await loadInventory();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to delete batch.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    }
+  };
+
   const handleAddVaccine = async () => {
     if (!settings || !newVaccine.trim()) return;
 
@@ -271,10 +316,17 @@ export default function SettingsPage() {
     }
   };
 
-  const handleUpdateStock = (vaccineName: string) => {
+  const handleUpdateStock = (item: any) => {
     if (user?.role !== 'vet_clinic') return;
 
-    setStockFormData({ name: vaccineName, quantity: '' });
+    setStockFormData({ 
+      name: item.vaccineName, 
+      quantity: '', 
+      batchNumber: item.batchNumber || '', 
+      origin: item.origin || '', 
+      expirationDate: item.expirationDate || '', 
+      description: item.description || '' 
+    });
     setIsStockDialogOpen(true);
   };
 
@@ -295,33 +347,36 @@ export default function SettingsPage() {
     }
 
     try {
-      await api.upsertInventory(stockFormData.name, quantity);
+      await api.createInventory({
+        name: stockFormData.name,
+        stock: quantity,
+        batch_number: stockFormData.batchNumber || undefined,
+        origin: stockFormData.origin || undefined,
+        expiration_date: stockFormData.expirationDate || undefined,
+        description: stockFormData.description || undefined,
+      });
       toast({
         title: 'Inventory Replenished',
-        description: `Successfully added ${quantity} units of ${stockFormData.name}.`,
+        description: `Successfully added batch of ${quantity} units for ${stockFormData.name}.`,
       });
       await loadInventory();
       setIsStockDialogOpen(false);
-      setStockFormData({ name: '', quantity: '' });
+      setStockFormData({ name: '', quantity: '', batchNumber: '', origin: '', expirationDate: '', description: '' });
     } catch (error) {
       toast({ title: 'Stock Update Failed', variant: 'destructive' });
     }
   };
 
-  const handleUpdateInfo = (vaccineName: string) => {
+  const handleUpdateInfo = (item: any) => {
     if (user?.role !== 'vet_clinic') return;
 
-    const existingItem = inventory.find(
-      (item) => item.name.toLowerCase() === vaccineName.toLowerCase()
-    );
-
     setInfoFormData({
-      id: existingItem?.id?.toString() || '',
-      name: existingItem?.name || vaccineName,
-      batchNumber: existingItem?.batchNumber || '',
-      origin: existingItem?.origin || '',
-      expirationDate: existingItem?.expirationDate || '',
-      description: existingItem?.description || '',
+      id: item.id?.toString() || '',
+      name: item.name || item.vaccineName,
+      batchNumber: item.batchNumber || '',
+      origin: item.origin || '',
+      expirationDate: item.expirationDate || '',
+      description: item.description || '',
     });
     setIsInfoDialogOpen(true);
   };
@@ -341,14 +396,7 @@ export default function SettingsPage() {
     try {
       if (infoFormData.id) {
         await api.updateInventory(infoFormData.id, payload);
-      } else {
-        await api.createInventory({
-          name: infoFormData.name,
-          stock: 0,
-          ...payload,
-        });
       }
-
       toast({
         title: 'Information Saved',
         description: `Metadata updated for ${infoFormData.name}.`,
@@ -722,7 +770,7 @@ export default function SettingsPage() {
                         <p>Loading vaccine inventory...</p>
                       </div>
                     </div>
-                  ) : inventoryVaccineNames.length === 0 ? (
+                  ) : allInventoryRows.length === 0 ? (
                     <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                       Add vaccine types above to start building the vaccine database.
                     </div>
@@ -732,45 +780,23 @@ export default function SettingsPage() {
                         <TableHeader>
                           <TableRow>
                             <TableHead className="min-w-[180px]">Vaccine</TableHead>
-                            <TableHead>Batch / Lot</TableHead>
-                            <TableHead>Manufacturer</TableHead>
-                            <TableHead>Expiration</TableHead>
-                            <TableHead>In Stock</TableHead>
+                            <TableHead>Total Stock</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {paginatedInventory.map((vaccineName) => {
-                            const item = inventory.find(
-                              (inventoryItem) =>
-                                inventoryItem.name.toLowerCase() === vaccineName.toLowerCase()
-                            );
-                            const stock = item?.stock ?? 0;
+                          {paginatedInventory.map((item, idx) => {
+                            const stock = item.totalStock ?? 0;
+                            const batchCount = item.batches.length;
 
                             return (
-                              <TableRow key={vaccineName}>
+                              <TableRow key={item.id || `group-${idx}`}>
                                 <TableCell className="font-medium">
-                                  {vaccineName}
-                                  {item?.description && (
-                                    <p
-                                      className="text-xs text-muted-foreground mt-1 truncate max-w-[220px]"
-                                      title={item.description}
-                                    >
-                                      {item.description}
-                                    </p>
-                                  )}
-                                </TableCell>
-                                <TableCell className="text-muted-foreground">
-                                  {item?.batchNumber || '-'}
-                                </TableCell>
-                                <TableCell className="text-muted-foreground">
-                                  {item?.origin || '-'}
-                                </TableCell>
-                                <TableCell className="text-muted-foreground">
-                                  {item?.expirationDate && isValid(parseISO(item.expirationDate))
-                                    ? format(parseISO(item.expirationDate), 'MMM d, yyyy')
-                                    : '-'}
+                                  {item.vaccineName}
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {batchCount === 0 ? 'No batches' : `${batchCount} batch${batchCount !== 1 ? 'es' : ''}`}
+                                  </p>
                                 </TableCell>
                                 <TableCell className="font-mono text-base">{stock}</TableCell>
                                 <TableCell>
@@ -796,20 +822,13 @@ export default function SettingsPage() {
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      disabled={!canManageInventory}
-                                      onClick={() => handleUpdateInfo(vaccineName)}
-                                    >
-                                      <Edit className="h-4 w-4 lg:mr-2" />
-                                      <span className="hidden lg:inline">Details</span>
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      disabled={!canManageInventory}
-                                      onClick={() => handleUpdateStock(vaccineName)}
+                                      onClick={() => {
+                                        setSelectedVaccineNameForBatches(item.vaccineName);
+                                        setIsManageBatchesDialogOpen(true);
+                                      }}
                                     >
                                       <PackagePlus className="h-4 w-4 lg:mr-2" />
-                                      <span className="hidden lg:inline">Restock</span>
+                                      <span className="hidden lg:inline">Manage Batches</span>
                                     </Button>
                                   </div>
                                 </TableCell>
@@ -818,7 +837,7 @@ export default function SettingsPage() {
                           })}
                         </TableBody>
                       </Table>
-                      {inventoryVaccineNames.length > 0 && (
+                      {allInventoryRows.length > 0 && (
                         <PaginationControls
                           currentPage={invPage}
                           totalPages={invTotalPages}
@@ -833,11 +852,86 @@ export default function SettingsPage() {
               </Card>
 
               <Dialog
+                open={isManageBatchesDialogOpen}
+                onOpenChange={setIsManageBatchesDialogOpen}
+              >
+                <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+                  <DialogHeader>
+                    <DialogTitle>{selectedVaccineNameForBatches} Batches</DialogTitle>
+                    <DialogDescription>
+                      Manage individual stock batches for this vaccine.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="flex justify-end mb-2">
+                     <Button size="sm" onClick={() => handleUpdateStock({ vaccineName: selectedVaccineNameForBatches })}>
+                       <Plus className="h-4 w-4 mr-2" />
+                       Add New Batch
+                     </Button>
+                  </div>
+                  <div className="overflow-auto border rounded-md">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Batch / Lot</TableHead>
+                          <TableHead>Manufacturer</TableHead>
+                          <TableHead>Expiration</TableHead>
+                          <TableHead>Stock</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedBatches.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                              No active batches found.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          selectedBatches.map((batch: any) => (
+                            <TableRow key={batch.id}>
+                              <TableCell className="font-medium">
+                                {batch.batchNumber || '-'}
+                                {batch.description && (
+                                  <p className="text-xs text-muted-foreground mt-1 truncate max-w-[200px]" title={batch.description}>{batch.description}</p>
+                                )}
+                              </TableCell>
+                              <TableCell>{batch.origin || '-'}</TableCell>
+                              <TableCell>
+                                {batch.expirationDate && isValid(parseISO(batch.expirationDate))
+                                  ? format(parseISO(batch.expirationDate), 'MMM d, yyyy')
+                                  : '-'}
+                              </TableCell>
+                              <TableCell>{batch.stock}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex justify-end gap-2">
+                                  <Button size="sm" variant="outline" onClick={() => handleUpdateInfo({...batch, vaccineName: selectedVaccineNameForBatches})}>
+                                    <Edit className="h-4 w-4 lg:mr-2" />
+                                    <span className="hidden lg:inline">Edit</span>
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={() => handleUpdateStock({...batch, vaccineName: selectedVaccineNameForBatches})}>
+                                    <PackagePlus className="h-4 w-4 lg:mr-2" />
+                                    <span className="hidden lg:inline">Restock</span>
+                                  </Button>
+                                  <Button size="sm" variant="outline" className="text-red-500 hover:text-red-700" onClick={() => handleDeleteBatch(batch.id)}>
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </DialogContent>
+              </Dialog>
+
+              <Dialog
                 open={isStockDialogOpen}
                 onOpenChange={(open) => {
                   setIsStockDialogOpen(open);
                   if (!open) {
-                    setStockFormData({ name: '', quantity: '' });
+                    setStockFormData({ name: '', quantity: '', batchNumber: '', origin: '', expirationDate: '', description: '' });
                   }
                 }}
               >
@@ -847,9 +941,9 @@ export default function SettingsPage() {
                     <DialogDescription>Adding units to {stockFormData.name}</DialogDescription>
                   </DialogHeader>
                   <form onSubmit={submitStockUpdate}>
-                    <div className="space-y-4 py-4">
+                    <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto px-1">
                       <div className="space-y-2">
-                        <Label>Amount to Add</Label>
+                        <Label>Amount to Add *</Label>
                         <Input
                           type="number"
                           min="1"
@@ -859,6 +953,47 @@ export default function SettingsPage() {
                           }
                           placeholder="e.g. 50"
                           required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Batch / Lot Number</Label>
+                        <Input
+                          value={stockFormData.batchNumber}
+                          onChange={(e) =>
+                            setStockFormData({ ...stockFormData, batchNumber: e.target.value })
+                          }
+                          placeholder="e.g. BATCH-2026-X"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Manufacturer / Origin</Label>
+                        <Input
+                          value={stockFormData.origin}
+                          onChange={(e) =>
+                            setStockFormData({ ...stockFormData, origin: e.target.value })
+                          }
+                          placeholder="e.g. Zoetis"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Expiration Date</Label>
+                        <Input
+                          type="date"
+                          value={stockFormData.expirationDate}
+                          onChange={(e) =>
+                            setStockFormData({ ...stockFormData, expirationDate: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Item Description / Medical Notes</Label>
+                        <Textarea
+                          value={stockFormData.description}
+                          onChange={(e) =>
+                            setStockFormData({ ...stockFormData, description: e.target.value })
+                          }
+                          placeholder="Contraindications, handling instructions..."
+                          rows={2}
                         />
                       </div>
                     </div>
