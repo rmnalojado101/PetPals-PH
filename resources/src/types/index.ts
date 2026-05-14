@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'vet_clinic' | 'owner' | 'veterinarian';
+export type UserRole = 'admin' | 'vet_clinic' | 'owner' | 'veterinarian' | 'receptionist';
 
 export interface User {
   id: string;
@@ -116,11 +116,23 @@ export interface MedicalRecord {
   temperature?: number;
   followUpDate?: string;
   attachmentPath?: string;
+  attachmentName?: string;
+  attachmentData?: string;
   attachmentUrl?: string;
+  clinicalDetails?: Record<string, unknown>;
   pet?: Pet;
   owner?: User;
   veterinarian?: User | Veterinarian;
+  appointment?: Appointment;
   createdAt?: string;
+}
+
+export interface ClinicPaymentMethod {
+  id: string;
+  label: string;
+  qrCodePath?: string;
+  qrCodeData?: string;
+  qrCodeUrl?: string;
 }
 
 export interface Notification {
@@ -147,6 +159,12 @@ export interface ClinicSettings {
   }[];
   logo?: string;
   vaccineTypes?: string[];
+  paymentQrCodePath?: string;
+  paymentQrCodeData?: string;
+  paymentQrCodeUrl?: string;
+  paymentMethods?: ClinicPaymentMethod[];
+  paymentMethodsWithUrls?: ClinicPaymentMethod[];
+  medicalRecordTemplates?: Record<string, unknown>[] | null;
 }
 
 export interface PaginatedResponse<T> {
@@ -158,6 +176,25 @@ export interface PaginatedResponse<T> {
 }
 
 export interface DashboardStats {
+  userStats?: {
+    total: number;
+    clinics: number;
+    owners: number;
+    vets: number;
+    newUsersLast30Days: number;
+  };
+  engagement?: {
+    activeAppointments: number;
+    totalMedicalRecords: number;
+    totalVaccinations: number;
+  };
+  systemPerformance?: {
+    databaseSize: string;
+    serverUptime: string;
+    responseTime: string;
+    errorRate: string;
+  };
+  recentEvents?: any[];
   todaysAppointments?: number;
   totalPets?: number;
   myPets?: number;
@@ -192,4 +229,36 @@ export interface VeterinarianActivityItem {
   role?: string;
   appointmentsCount: number;
   recordsCount: number;
+}
+
+export type BillingStatus = 'pending' | 'paid' | 'partially_paid' | 'cancelled';
+
+export interface BillingItem {
+  description: string;
+  quantity: number;
+  price: number;
+}
+
+export interface Billing {
+  id: string;
+  invoiceNumber: string;
+  petId: string;
+  ownerId: string;
+  medicalRecordId?: string;
+  vaccinationId?: string;
+  totalAmount: number;
+  status: BillingStatus;
+  paymentMethod?: string;
+  items: BillingItem[];
+  billingDate: string;
+  notes?: string;
+  proofOfPaymentPath?: string;
+  proofOfPaymentName?: string;
+  proofOfPaymentUrl?: string;
+  pet?: Pet;
+  owner?: User;
+  medicalRecord?: MedicalRecord;
+  vaccination?: Vaccination;
+  createdAt?: string;
+  updatedAt?: string;
 }

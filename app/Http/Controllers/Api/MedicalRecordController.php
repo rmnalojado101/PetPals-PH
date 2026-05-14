@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Appointment;
+use App\Models\ClinicSettings;
 use App\Models\MedicalRecord;
 use App\Models\Notification;
 use App\Models\Veterinarian;
@@ -16,18 +17,21 @@ class MedicalRecordController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
-        $query = MedicalRecord::with(['pet.owner', 'veterinarian', 'appointment']);
+        $query = MedicalRecord::with(['pet.owner', 'veterinarian.clinic', 'appointment']);
 
         if ($user->isOwner()) {
             $query->whereHas('pet', function ($q) use ($user) {
                 $q->where('owner_id', $user->id);
             });
         } elseif ($user->isVetClinic()) {
-            $query->whereHas('veterinarian', function ($q) use ($user) {
-                $q->where('clinicId', $user->id);
+            $vetIds = Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $query->whereHas('pet.owner.appointmentsAsOwner', function ($q) use ($vetIds) {
+                $q->whereIn('veterinarian_id', $vetIds);
             });
         } elseif ($linkedVetId = $user->linkedVeterinarianId()) {
-            $query->where('veterinarian_id', $linkedVetId);
+            $query->whereHas('pet.owner.appointmentsAsOwner', function ($q) use ($linkedVetId) {
+                $q->where('veterinarian_id', $linkedVetId);
+            });
         }
 
         if ($request->has('pet_id')) {
@@ -36,6 +40,12 @@ class MedicalRecordController extends Controller
 
         if ($request->has('start_date') && $request->has('end_date')) {
             $query->whereBetween('record_date', [$request->start_date, $request->end_date]);
+        }
+
+        if ($request->has('unbilled')) {
+            $query->whereDoesntHave('billing', function($q) {
+                $q->where('status', '!=', 'cancelled');
+            });
         }
 
         if ($request->filled('search')) {
@@ -61,17 +71,28 @@ class MedicalRecordController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        if ($user->isVetClinic() && optional($medicalRecord->veterinarian)->clinicId !== $user->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        if ($user->isVetClinic()) {
+            $vetIds = Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $hasAppointment = $medicalRecord->pet->owner->appointmentsAsOwner()
+                ->whereIn('veterinarian_id', $vetIds)
+                ->exists();
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No clinic appointments with this owner.'], 403);
+            }
         }
 
-        if (($linkedVetId = $user->linkedVeterinarianId()) && $medicalRecord->veterinarian_id !== $linkedVetId) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        if ($linkedVetId = $user->linkedVeterinarianId()) {
+            $hasAppointment = $medicalRecord->pet->owner->appointmentsAsOwner()
+                ->where('veterinarian_id', $linkedVetId)
+                ->exists();
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No veterinarian appointments with this owner.'], 403);
+            }
         }
 
         return response()->json($medicalRecord->load([
             'pet.owner',
-            'veterinarian',
+            'veterinarian.clinic',
             'appointment',
         ]));
     }
@@ -102,7 +123,8 @@ class MedicalRecordController extends Controller
             'weight' => 'nullable|numeric|min:0',
             'temperature' => 'nullable|numeric|min:30|max:45',
             'follow_up_date' => 'nullable|date|after:today',
-            'attachment' => 'nullable|file|mimes:pdf,doc,docx|max:10240', // 10MB max
+            'attachment' => 'nullable|file|extensions:pdf,doc,docx,jpg,jpeg,png,webp,txt,jfif|max:20480', // 20MB max
+            'attachment_name' => 'nullable|string|max:255',
         ]);
 
         $validated['veterinarian_id'] = $linkedVetId ?? $validated['veterinarian_id'];
@@ -126,11 +148,35 @@ class MedicalRecordController extends Controller
         }
 
         if ($request->hasFile('attachment')) {
-            $path = $request->file('attachment')->store('medical_attachments', 'public');
-            $validated['attachment_path'] = $path;
+            $file = $request->file('attachment');
+            $validated['attachment_name'] = $file->getClientOriginalName();
+            // Store content in database as base64 data URL
+            $validated['attachment_data'] = 'data:' . $file->getMimeType() . ';base64,' . base64_encode(file_get_contents($file->getRealPath()));
+            $validated['attachment_path'] = null;
         }
 
         $record = MedicalRecord::create($validated);
+
+        // Removed automatic billing generation as requested by user
+        /*
+        \App\Models\Billing::create([
+            'invoice_number' => 'INV-' . strtoupper(\Illuminate\Support\Str::random(8)),
+            'pet_id' => $record->pet_id,
+            'owner_id' => $record->pet->owner_id,
+            'medical_record_id' => $record->id,
+            'total_amount' => 0, // Placeholder
+            'status' => 'pending',
+            'billing_date' => $record->record_date,
+            'items' => [
+                [
+                    'description' => "Medical Consultation" . ($record->diagnosis ? ": " . $record->diagnosis : ""),
+                    'quantity' => 1,
+                    'price' => 0
+                ]
+            ],
+            'notes' => 'Automatically generated from medical record entry.'
+        ]);
+        */
 
         if ($record->appointment_id) {
             $record->appointment->update(['status' => 'completed']);
@@ -147,7 +193,7 @@ class MedicalRecordController extends Controller
             'type' => 'medical',
         ]);
 
-        return response()->json($record->load(['pet.owner', 'veterinarian']), 201);
+        return response()->json($record->load(['pet.owner', 'veterinarian.clinic', 'appointment']), 201);
     }
 
     public function update(Request $request, MedicalRecord $medicalRecord)
@@ -172,7 +218,8 @@ class MedicalRecordController extends Controller
             'weight' => 'nullable|numeric|min:0',
             'temperature' => 'nullable|numeric|min:30|max:45',
             'follow_up_date' => 'nullable|date',
-            'attachment' => 'nullable|file|mimes:pdf,doc,docx|max:10240',
+            'attachment' => 'nullable|file|extensions:pdf,doc,docx,jpg,jpeg,png,webp,txt,jfif|max:20480',
+            'attachment_name' => 'nullable|string|max:255',
         ]);
 
         if (isset($validated['veterinarian_id'])) {
@@ -187,13 +234,24 @@ class MedicalRecordController extends Controller
             }
         }
 
-        if ($request->hasFile('attachment')) {
-            // Delete old attachment if it exists
+        if ($request->boolean('remove_attachment')) {
             if ($medicalRecord->attachment_path) {
                 \Illuminate\Support\Facades\Storage::disk('public')->delete($medicalRecord->attachment_path);
             }
-            $path = $request->file('attachment')->store('medical_attachments', 'public');
-            $validated['attachment_path'] = $path;
+            $validated['attachment_path'] = null;
+            $validated['attachment_name'] = null;
+            $validated['attachment_data'] = null;
+        }
+
+        if ($request->hasFile('attachment')) {
+            if ($medicalRecord->attachment_path) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($medicalRecord->attachment_path);
+            }
+            $file = $request->file('attachment');
+            $validated['attachment_name'] = $file->getClientOriginalName();
+            // Store content in database as base64 data URL
+            $validated['attachment_data'] = 'data:' . $file->getMimeType() . ';base64,' . base64_encode(file_get_contents($file->getRealPath()));
+            $validated['attachment_path'] = null;
         }
 
         $medicalRecord->update($validated);
@@ -202,7 +260,7 @@ class MedicalRecordController extends Controller
             $medicalRecord->pet->update(['weight' => $validated['weight']]);
         }
 
-        return response()->json($medicalRecord->load(['pet.owner', 'veterinarian']));
+        return response()->json($medicalRecord->load(['pet.owner', 'veterinarian.clinic', 'appointment']));
     }
 
     public function destroy(Request $request, MedicalRecord $medicalRecord)
@@ -216,6 +274,9 @@ class MedicalRecordController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
+        if ($medicalRecord->attachment_path) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($medicalRecord->attachment_path);
+        }
         $medicalRecord->delete();
 
         return response()->json(['message' => 'Medical record deleted successfully']);
@@ -237,8 +298,10 @@ class MedicalRecordController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $record = $medicalRecord->load(['pet.owner', 'veterinarian']);
-        $pdf = Pdf::loadView('pdf.medical-record', compact('record'));
+        $record = $medicalRecord->load(['pet.owner', 'veterinarian.clinic', 'appointment']);
+        $clinicId = optional($record->veterinarian)->clinicId;
+        $clinic = ClinicSettings::getInstance($clinicId);
+        $pdf = Pdf::loadView('pdf.medical-record', compact('record', 'clinic'))->setPaper('a4');
 
         return $pdf->download("medical-record-{$record->id}.pdf");
     }
@@ -247,30 +310,92 @@ class MedicalRecordController extends Controller
     {
         $user = $request->user();
 
-        // Security check (reusing same logic as exportPdf)
         if ($user->isOwner() && $medicalRecord->pet->owner_id !== $user->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        if (!$medicalRecord->attachment_path) {
-            return response()->json(['message' => 'No attachment found for this record.'], 404);
+        if ($user->isVetClinic() && optional($medicalRecord->veterinarian)->clinicId !== $user->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        if (!\Illuminate\Support\Facades\Storage::disk('public')->exists($medicalRecord->attachment_path)) {
-            return response()->json(['message' => 'File not found on server.'], 404);
+        if (($linkedVetId = $user->linkedVeterinarianId()) && $medicalRecord->veterinarian_id !== $linkedVetId) {
+            return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        return \Illuminate\Support\Facades\Storage::disk('public')->download($medicalRecord->attachment_path);
+        if ($medicalRecord->attachment_data) {
+            return $this->fileResponseFromDataUrl(
+                $medicalRecord->attachment_data,
+                $medicalRecord->attachment_name ?: 'medical-attachment'
+            );
+        }
+
+        // Fallback for physical file storage (legacy migration)
+        if ($medicalRecord->attachment_path) {
+            $path = storage_path('app/public/' . $medicalRecord->attachment_path);
+            if (file_exists($path)) {
+                $downloadName = $medicalRecord->attachment_name ?? basename($path);
+                return response()->download($path, $downloadName);
+            }
+        }
+
+        return response()->json(['message' => 'No attachment found for this record.'], 404);
+    }
+
+    private function fileResponseFromDataUrl(string $dataUrl, string $fileName)
+    {
+        if (!preg_match('/^data:([^;]+);base64,(.*)$/s', $dataUrl, $matches)) {
+            // Fallback for raw base64 if someone stored it without the prefix
+            $content = base64_decode($dataUrl, true);
+            if ($content !== false) {
+                return response($content)
+                    ->header('Content-Type', $this->getMimeTypeFromFilename($fileName))
+                    ->header('Content-Disposition', 'inline; filename="' . $fileName . '"');
+            }
+            return response()->json(['message' => 'Stored attachment is invalid'], 422);
+        }
+
+        $content = base64_decode($matches[2], true);
+
+        if ($content === false) {
+            return response()->json(['message' => 'Stored attachment is invalid'], 422);
+        }
+
+        $safeName = str_replace(['"', "\r", "\n"], '', $fileName);
+
+        return response($content)
+            ->header('Content-Type', $matches[1])
+            ->header('Content-Disposition', 'inline; filename="' . $safeName . '"');
+    }
+
+    private function getMimeTypeFromFilename($filename)
+    {
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        return match($extension) {
+            'pdf' => 'application/pdf',
+            'doc' => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'jpg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            default => 'application/octet-stream'
+        };
     }
 
     public function petHistory(Request $request, $petId)
     {
         $user = $request->user();
 
-        $records = MedicalRecord::with(['pet.owner', 'veterinarian'])
-            ->where('pet_id', $petId)
-            ->orderBy('record_date', 'desc')
-            ->get();
+        $query = MedicalRecord::with(['pet.owner', 'veterinarian.clinic', 'appointment'])
+            ->where('pet_id', $petId);
+
+        if ($request->has('unbilled')) {
+            $query->whereDoesntHave('billing', function($q) {
+                $q->where('status', '!=', 'cancelled');
+            });
+        }
+
+        $records = $query->orderBy('record_date', 'desc')
+            ->paginate($request->integer('per_page', 10));
 
         if ($user->isOwner() && $records->isNotEmpty()) {
             if ($records->first()->pet->owner_id !== $user->id) {
@@ -279,10 +404,21 @@ class MedicalRecordController extends Controller
         }
 
         if ($user->isVetClinic() && $records->isNotEmpty()) {
-            $recordClinicId = optional($records->first()->veterinarian)->clinicId;
+            $vetIds = Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $hasAppointment = $records->first()->pet->owner->appointmentsAsOwner()
+                ->whereIn('veterinarian_id', $vetIds)
+                ->exists();
 
-            if ((string) $recordClinicId !== (string) $user->id) {
-                return response()->json(['message' => 'Unauthorized'], 403);
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No clinic appointments with this pet owner.'], 403);
+            }
+        } elseif (($linkedVetId = $user->linkedVeterinarianId()) && $records->isNotEmpty()) {
+            $hasAppointment = $records->first()->pet->owner->appointmentsAsOwner()
+                ->where('veterinarian_id', $linkedVetId)
+                ->exists();
+
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No veterinarian appointments with this pet owner.'], 403);
             }
         }
 

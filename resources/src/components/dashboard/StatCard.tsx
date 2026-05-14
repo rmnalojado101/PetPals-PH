@@ -7,7 +7,7 @@ interface StatCardProps {
   icon: LucideIcon;
   trend?: 'up' | 'down' | 'neutral';
   trendValue?: string;
-  variant: 'pink' | 'blue' | 'green' | 'orange';
+  variant: 'pink' | 'blue' | 'green' | 'orange' | 'purple';
 }
 
 const variantStyles = {
@@ -34,6 +34,12 @@ const variantStyles = {
     iconBg: 'bg-orange-100',
     icon: 'text-stat-orange',
     trend: 'bg-orange-500',
+  },
+  purple: {
+    bg: 'bg-purple-50',
+    iconBg: 'bg-purple-100',
+    icon: 'text-purple-600',
+    trend: 'bg-purple-500',
   },
 };
 

@@ -19,4 +19,11 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./resources/src"),
     },
   },
+  server: {
+    host: '127.0.0.1',
+    port: 5174,
+    hmr: {
+      host: '127.0.0.1',
+    },
+  },
 }));

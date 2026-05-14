@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
-import { petsStorage, usersStorage } from '@/lib/storage';
-import type { Pet } from '@/types';
+import type { Pet, User } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -70,8 +69,10 @@ export default function PetsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const ownerParam = searchParams.get('owner');
+  const petIdParam = searchParams.get('id');
   
   const [pets, setPets] = useState<Pet[]>([]);
+  const [owners, setOwners] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [speciesFilter, setSpeciesFilter] = useState<string>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -93,18 +94,29 @@ export default function PetsPage() {
   });
 
   useEffect(() => {
-    loadPets();
-  }, [user, ownerParam]);
+    void loadPets();
+    if (user?.role !== 'owner') {
+      void loadOwners();
+    }
+  }, [user, ownerParam, petIdParam]);
+
+  const loadOwners = async () => {
+    try {
+      const data = await api.getOwners();
+      setOwners(Array.isArray(data) ? data : (data as any).data ?? []);
+    } catch (error) {
+      console.error('Failed to load owners from API:', error);
+      setOwners([]);
+    }
+  };
 
   const loadPets = async () => {
     if (!user) return;
 
     try {
-      // api.getPets() applies server-side role-based filtering:
-      // - owner: only their pets
-      // - vet_clinic/admin: all pets (optionally filtered by owner_id)
       const params: Record<string, string | number | undefined> = { per_page: 200 };
       if (ownerParam) params.owner_id = ownerParam;
+      if (petIdParam) params.id = petIdParam;
 
       const response = await api.getPets(params);
       const list: Pet[] = Array.isArray(response)
@@ -112,15 +124,8 @@ export default function PetsPage() {
         : (response as any).data ?? [];
       setPets(list);
     } catch (error) {
-      console.error('Failed to load pets from API, falling back to localStorage:', error);
-      // Fallback to localStorage
-      if (user.role === 'owner') {
-        setPets(petsStorage.getByOwner(user.id));
-      } else if (ownerParam) {
-        setPets(petsStorage.getByOwner(ownerParam));
-      } else {
-        setPets(petsStorage.getAll());
-      }
+      console.error('Failed to load pets from API:', error);
+      setPets([]);
     }
   };
 
@@ -141,7 +146,7 @@ export default function PetsPage() {
     setEditingPet(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     const petData = {
@@ -152,23 +157,31 @@ export default function PetsPage() {
       allergies: formData.allergies.split(',').map(a => a.trim()).filter(Boolean),
     };
 
-    if (editingPet) {
-      petsStorage.update(editingPet.id, petData);
+    try {
+      if (editingPet) {
+        await api.updatePet(editingPet.id, petData as unknown as Record<string, unknown>);
+        toast({
+          title: 'Pet Updated',
+          description: `${formData.name}'s profile has been updated.`,
+        });
+      } else {
+        await api.createPet(petData as unknown as Record<string, unknown>);
+        toast({
+          title: 'Pet Added',
+          description: `${formData.name} has been added successfully.`,
+        });
+      }
+
+      await loadPets();
+      setIsDialogOpen(false);
+      resetForm();
+    } catch (error: unknown) {
       toast({
-        title: 'Pet Updated',
-        description: `${formData.name}'s profile has been updated.`,
-      });
-    } else {
-      petsStorage.create(petData);
-      toast({
-        title: 'Pet Added',
-        description: `${formData.name} has been added successfully.`,
+        title: 'Save Failed',
+        description: error instanceof Error ? error.message : 'Could not save pet profile.',
+        variant: 'destructive',
       });
     }
-
-    loadPets();
-    setIsDialogOpen(false);
-    resetForm();
   };
 
   const handleEdit = (pet: Pet) => {
@@ -189,19 +202,25 @@ export default function PetsPage() {
     setIsDialogOpen(true);
   };
 
-  const handleDelete = (pet: Pet) => {
+  const handleDelete = async (pet: Pet) => {
     if (confirm(`Are you sure you want to delete ${pet.name}?`)) {
-      petsStorage.delete(pet.id);
-      toast({
-        title: 'Pet Deleted',
-        description: `${pet.name} has been removed.`,
-        variant: 'destructive',
-      });
-      loadPets();
+      try {
+        await api.deletePet(pet.id);
+        toast({
+          title: 'Pet Deleted',
+          description: `${pet.name} has been removed.`,
+          variant: 'destructive',
+        });
+        await loadPets();
+      } catch (error: unknown) {
+        toast({
+          title: 'Delete Failed',
+          description: error instanceof Error ? error.message : `Could not delete ${pet.name}.`,
+          variant: 'destructive',
+        });
+      }
     }
   };
-
-  const owners = usersStorage.getByRole('owner');
 
   const filteredPets = pets.filter(pet => {
     const matchesSearch = 
@@ -218,7 +237,7 @@ export default function PetsPage() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in" data-tour="pets-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Animals</h1>
@@ -465,7 +484,7 @@ export default function PetsPage() {
               </TableHeader>
               <TableBody>
                 {paginatedData.map((pet) => {
-                  const owner = usersStorage.getById(pet.ownerId);
+                  const owner = pet.owner;
                   return (
                     <TableRow key={pet.id}>
                       <TableCell>
@@ -492,7 +511,7 @@ export default function PetsPage() {
                       {user?.role !== 'owner' && (
                         <TableCell>
                           <p className="font-medium">{owner?.name || 'Unknown'}</p>
-                          <p className="text-sm text-muted-foreground">{owner?.phone}</p>
+                          <p className="text-sm text-muted-foreground">{owner?.phone || 'N/A'}</p>
                         </TableCell>
                       )}
                       <TableCell>

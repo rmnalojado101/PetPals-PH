@@ -30,7 +30,7 @@ class VaccineInventoryController extends Controller
             $query->where('clinic_id', $veterinarian->clinicId);
         }
 
-        return response()->json($query->get());
+        return response()->json($query->orderBy('name')->paginate($request->integer('per_page', 20)));
     }
 
     public function store(Request $request)

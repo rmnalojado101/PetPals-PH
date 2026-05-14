@@ -23,13 +23,19 @@ class MedicalRecord extends Model
         'temperature',
         'follow_up_date',
         'attachment_path',
+        'attachment_name',
+        'attachment_data',
+        'clinical_details',
     ];
+
+    protected $hidden = ['attachment_data'];
 
     protected $casts = [
         'record_date' => 'date',
         'follow_up_date' => 'date',
         'weight' => 'decimal:2',
         'temperature' => 'decimal:1',
+        'clinical_details' => 'array',
     ];
 
     public function pet()
@@ -45,6 +51,11 @@ class MedicalRecord extends Model
     public function veterinarian()
     {
         return $this->belongsTo(Veterinarian::class, 'veterinarian_id');
+    }
+
+    public function billing()
+    {
+        return $this->hasOne(Billing::class);
     }
 
     public function scopeForPet($query, int $petId)
@@ -66,6 +77,8 @@ class MedicalRecord extends Model
 
     public function getAttachmentUrlAttribute()
     {
-        return $this->attachment_path ? '/storage/' . $this->attachment_path : null;
+        return ($this->attachment_data || $this->attachment_path)
+            ? "/api/medical-records/{$this->id}/download-attachment"
+            : null;
     }
 }

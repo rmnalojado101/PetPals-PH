@@ -50,7 +50,7 @@ import {
   Filter,
   Loader2
 } from 'lucide-react';
-import { addMonths, format, parseISO, isValid } from 'date-fns';
+import { addMonths, format, parseISO, isValid, parse } from 'date-fns';
 import { cn } from '@/lib/utils';
 import type { PaginatedResponse } from '@/types';
 import { usePagination } from '@/hooks/usePagination';
@@ -153,10 +153,10 @@ export default function AppointmentsPage() {
       
       setAppointments(Array.isArray(appointmentsResponse) ? appointmentsResponse : (appointmentsResponse as PaginatedResponse<Appointment>).data);
       setPets(Array.isArray(petsResponse) ? petsResponse : (petsResponse as PaginatedResponse<Pet>).data);
-      setVeterinarians(vetsResponse);
+      setVeterinarians(Array.isArray(vetsResponse) ? vetsResponse : (vetsResponse as any).data ?? []);
       setClinics(Array.isArray(clinicsResponse) ? clinicsResponse : (clinicsResponse as PaginatedResponse<User>).data);
       if (user.role !== 'owner') {
-        setOwners(ownersResponse);
+        setOwners(Array.isArray(ownersResponse) ? ownersResponse : (ownersResponse as any).data ?? []);
       }
     } catch (error) {
       console.error('Error loading appointments:', error);
@@ -334,7 +334,7 @@ export default function AppointmentsPage() {
         <TableCell>
           <div>
             <p className="font-medium">{aDate ? format(parseISO(aDate), 'MMM d, yyyy') : ''}</p>
-            <p className="text-sm text-muted-foreground">{aTime}</p>
+            <p className="text-sm text-muted-foreground">{aTime ? format(parse(aTime, 'HH:mm', new Date()), 'hh:mm a') : ''}</p>
           </div>
         </TableCell>
         <TableCell>
@@ -371,7 +371,7 @@ export default function AppointmentsPage() {
             >
               <Eye className="h-4 w-4" />
             </Button>
-            {apt.status === 'pending' && (user?.role === 'admin' || user?.role === 'vet_clinic' || user?.role === 'veterinarian') && (
+            {apt.status === 'pending' && (user?.role === 'admin' || user?.role === 'vet_clinic') && (
               <>
                 <Button
                   variant="ghost"
@@ -391,7 +391,7 @@ export default function AppointmentsPage() {
                 </Button>
               </>
             )}
-            {apt.status === 'approved' && (user?.role === 'admin' || user?.role === 'vet_clinic' || user?.role === 'veterinarian') && (
+            {apt.status === 'approved' && (user?.role === 'admin' || user?.role === 'vet_clinic') && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -560,7 +560,9 @@ export default function AppointmentsPage() {
                               className={cn("w-full relative overflow-hidden transition-all", isBooked && "opacity-40 cursor-not-allowed line-through bg-muted")}
                               onClick={() => setFormData({ ...formData, time })}
                             >
-                              <span className={cn(isBooked && "opacity-20")}>{time}</span>
+                              <span className={cn(isBooked && "opacity-20")}>
+                                 {format(parse(time, 'HH:mm', new Date()), 'hh:mm a')}
+                              </span>
                               {isBooked && (
                                 <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-destructive no-underline tracking-widest bg-background/50 drop-shadow-sm">
                                   RESERVED
@@ -585,7 +587,7 @@ export default function AppointmentsPage() {
                     <div className="p-3 bg-muted rounded-md flex items-center gap-2">
                       <CalendarIcon className="h-4 w-4" />
                       <span className="font-medium">
-                        {selectedDate ? format(selectedDate, 'MMMM d, yyyy') : ''} at {formData.time}
+                        {selectedDate ? format(selectedDate, 'MMMM d, yyyy') : ''} at {formData.time ? format(parse(formData.time, 'HH:mm', new Date()), 'hh:mm a') : ''}
                       </span>
                     </div>
                   </div>
@@ -707,7 +709,7 @@ export default function AppointmentsPage() {
                     <p className="font-medium">
                       {aDate ? format(parseISO(aDate), 'MMMM d, yyyy') : ''}
                     </p>
-                    <p>{aTime}</p>
+                    <p>{aTime ? format(parse(aTime, 'HH:mm', new Date()), 'hh:mm a') : ''}</p>
                   </div>
                   <div>
                     <Label className="text-muted-foreground">Status</Label>

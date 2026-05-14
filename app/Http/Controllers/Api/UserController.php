@@ -12,6 +12,11 @@ class UserController extends Controller
 {
     public function index(Request $request)
     {
+        $currentUser = $request->user();
+        if (!$currentUser->isAdmin() && $request->role !== 'vet_clinic') {
+            return response()->json(['message' => 'Unauthorized. Only admins can access the full user list.'], 403);
+        }
+
         $query = User::query();
 
         if ($request->has('role')) {
@@ -26,10 +31,6 @@ class UserController extends Controller
             });
         }
 
-        if (!$request->boolean('include_legacy_veterinarians')) {
-            $query->whereIn('role', ['admin', 'vet_clinic', 'owner']);
-        }
-
         $users = $query->orderBy('created_at', 'desc')
             ->paginate($request->integer('per_page', 20));
 
@@ -38,6 +39,27 @@ class UserController extends Controller
 
     public function show(User $user)
     {
+        $currentUser = request()->user();
+
+        if ($currentUser->isVetClinic()) {
+            $vetIds = Veterinarian::where('clinicId', $currentUser->id)->pluck('id');
+            $hasAppointment = $user->appointmentsAsOwner()
+                ->whereIn('veterinarian_id', $vetIds)
+                ->exists();
+            
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No appointments with this owner.'], 403);
+            }
+        } elseif ($linkedVetId = $currentUser->linkedVeterinarianId()) {
+            $hasAppointment = $user->appointmentsAsOwner()
+                ->where('veterinarian_id', $linkedVetId)
+                ->exists();
+
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No appointments with this owner.'], 403);
+            }
+        }
+
         return response()->json($user->load(['pets']));
     }
 
@@ -47,7 +69,7 @@ class UserController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8',
-            'role' => 'required|in:admin,vet_clinic,owner',
+            'role' => 'required|in:admin,vet_clinic,owner,veterinarian,receptionist',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
         ]);
@@ -65,7 +87,7 @@ class UserController extends Controller
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $user->id,
-            'role' => 'sometimes|in:admin,vet_clinic,owner',
+            'role' => 'sometimes|in:admin,vet_clinic,owner,veterinarian,receptionist',
             'password' => 'nullable|string|min:8',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
@@ -95,7 +117,7 @@ class UserController extends Controller
 
     public function veterinarians()
     {
-        $vets = Veterinarian::with('clinic')->get();
+        $vets = Veterinarian::with('clinic')->orderBy('name')->paginate(20);
         return response()->json($vets);
     }
 
@@ -115,7 +137,7 @@ class UserController extends Controller
             });
         }
 
-        $owners = $query->orderBy('name')->get();
+        $owners = $query->orderBy('name')->paginate($request->integer('per_page', 20));
         return response()->json($owners);
     }
 }

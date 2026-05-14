@@ -12,9 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('clinic_settings', function (Blueprint $table) {
-            if (!Schema::hasColumn('clinic_settings', 'medical_record_template')) {
-                $table->text('medical_record_template')->nullable();
-            }
+            $table->json('payment_methods')->nullable()->after('payment_qr_code_path');
         });
     }
 
@@ -24,9 +22,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('clinic_settings', function (Blueprint $table) {
-            if (Schema::hasColumn('clinic_settings', 'medical_record_template')) {
-                $table->dropColumn('medical_record_template');
-            }
+            $table->dropColumn('payment_methods');
         });
     }
 };

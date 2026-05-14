@@ -20,6 +20,10 @@ interface TourContextValue {
 
 const TourContext = createContext<TourContextValue | undefined>(undefined);
 
+function getTourStorage(): Storage | null {
+  return typeof window === "undefined" ? null : window.localStorage;
+}
+
 function getTargetRect(targetSelector: string): TourHighlightRect | null {
   const target = document.querySelector<HTMLElement>(targetSelector);
 
@@ -90,7 +94,8 @@ export function TourProvider({ children }: { children: ReactNode }) {
 
   const markTourComplete = useCallback(() => {
     if (storageKey) {
-      localStorage.setItem(storageKey, "true");
+      // Store in sessionStorage only - cleared when tab closes
+      getTourStorage()?.setItem(storageKey, "true");
     }
   }, [storageKey]);
 
@@ -115,7 +120,8 @@ export function TourProvider({ children }: { children: ReactNode }) {
 
   const restartTour = useCallback(() => {
     if (storageKey) {
-      localStorage.removeItem(storageKey);
+      // Clear from sessionStorage
+      getTourStorage()?.removeItem(storageKey);
     }
 
     setCurrentStepIndex(0);
@@ -149,7 +155,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (storageKey && localStorage.getItem(storageKey) === "true") {
+    if (storageKey && (getTourStorage()?.getItem(storageKey) === "true")) {
       return;
     }
 

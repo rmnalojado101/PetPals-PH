@@ -16,6 +16,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .phpunit.result.cache
+/.phpunit.cache
 /vendor
 /.parcel-cache
 /.sass-cache

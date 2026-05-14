@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\VaccinationController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\SettingsController;
+use App\Http\Controllers\Api\BillingController;
+use App\Http\Controllers\Api\VaccineInventoryController;
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
@@ -27,52 +29,69 @@ Route::get('/debug-db', function() {
     ]);
 });
 
-Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/user', [AuthController::class, 'user']);
-    Route::post('/logout', [AuthController::class, 'logout']);
-    Route::put('/profile', [AuthController::class, 'updateProfile']);
-    Route::put('/password', [AuthController::class, 'changePassword']);
-
-    Route::apiResource('users', UserController::class);
-
-    Route::get('/owners', [UserController::class, 'owners']);
-
-    Route::apiResource('pets', PetController::class);
-    Route::apiResource('appointments', AppointmentController::class);
-    Route::get('/appointments-availability', [AppointmentController::class, 'availability']);
-    Route::get('/appointments-today', [AppointmentController::class, 'today']);
-    Route::get('/appointments-upcoming', [AppointmentController::class, 'upcoming']);
-
-    Route::apiResource('medical-records', MedicalRecordController::class);
-    Route::get('/medical-records/{medicalRecord}/pdf', [MedicalRecordController::class, 'exportPdf']);
-    Route::get('/medical-records/{medicalRecord}/download-attachment', [MedicalRecordController::class, 'downloadAttachment']);
-    Route::get('/pets/{petId}/medical-history', [MedicalRecordController::class, 'petHistory']);
-
-    Route::apiResource('vaccinations', VaccinationController::class);
-    Route::get('/vaccinations-due-soon', [VaccinationController::class, 'dueSoon']);
-    Route::get('/vaccinations-overdue', [VaccinationController::class, 'overdue']);
-
-    Route::apiResource('veterinarians', \App\Http\Controllers\Api\VeterinarianController::class);
-
-    Route::get('/notifications', [NotificationController::class, 'index']);
-    Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
-    Route::put('/notifications/{notification}/read', [NotificationController::class, 'markAsRead']);
-    Route::put('/notifications/read-all', [NotificationController::class, 'markAllAsRead']);
-    Route::delete('/notifications/{notification}', [NotificationController::class, 'destroy']);
-
-    Route::get('/reports/dashboard', [ReportController::class, 'dashboard']);
-    Route::get('/reports/appointments', [ReportController::class, 'appointmentStats']);
-    Route::get('/reports/species', [ReportController::class, 'speciesDistribution']);
-    Route::get('/reports/veterinarians', [ReportController::class, 'veterinarianActivity']);
-    Route::get('/reports/export/appointments', [ReportController::class, 'exportAppointments']);
-
-    Route::get('/settings', [SettingsController::class, 'index']);
-    Route::put('/settings', [SettingsController::class, 'update']);
-
-    // Vaccine Inventory
-    Route::get('/inventory', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'index']);
-    Route::post('/inventory', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'store']);
-    Route::post('/inventory/upsert', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'upsert']);
-    Route::put('/inventory/{vaccineInventory}', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'update']);
-    Route::delete('/inventory/{vaccineInventory}', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'destroy']);
+Route::get('/debug-auth', function(\Illuminate\Http\Request $request) {
+    return response()->json([
+        'user' => $request->user(),
+        'role' => $request->user()?->role,
+        'id' => $request->user()?->id,
+        'is_owner' => $request->user()?->isOwner(),
+        'session_id' => $request->session()->getId(),
+        'cookies' => $_COOKIE,
+    ]);
 });
+
+Route::get('/user', [AuthController::class, 'user']);
+Route::post('/logout', [AuthController::class, 'logout']);
+Route::put('/profile', [AuthController::class, 'updateProfile']);
+Route::put('/password', [AuthController::class, 'changePassword']);
+
+Route::apiResource('users', UserController::class);
+Route::get('/owners', [UserController::class, 'owners']);
+Route::apiResource('veterinarians', \App\Http\Controllers\Api\VeterinarianController::class);
+
+Route::apiResource('pets', PetController::class);
+Route::apiResource('appointments', AppointmentController::class);
+Route::get('/appointments-availability', [AppointmentController::class, 'availability']);
+Route::get('/appointments-today', [AppointmentController::class, 'today']);
+Route::get('/appointments-upcoming', [AppointmentController::class, 'upcoming']);
+
+Route::apiResource('medical-records', MedicalRecordController::class);
+Route::get('/medical-records/{medicalRecord}/pdf', [MedicalRecordController::class, 'exportPdf']);
+Route::get('/medical-records/{medicalRecord}/download-attachment', [MedicalRecordController::class, 'downloadAttachment']);
+Route::get('/pets/{petId}/medical-history', [MedicalRecordController::class, 'petHistory']);
+
+Route::apiResource('vaccinations', VaccinationController::class);
+Route::get('/vaccinations-due-soon', [VaccinationController::class, 'dueSoon']);
+Route::get('/vaccinations-overdue', [VaccinationController::class, 'overdue']);
+
+Route::get('/notifications', [NotificationController::class, 'index']);
+Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+Route::put('/notifications/{notification}/read', [NotificationController::class, 'markAsRead']);
+Route::put('/notifications/read-all', [NotificationController::class, 'markAllAsRead']);
+Route::delete('/notifications/{notification}', [NotificationController::class, 'destroy']);
+
+Route::get('/reports/dashboard', [ReportController::class, 'dashboard']);
+Route::get('/reports/summary', [ReportController::class, 'summary']);
+Route::get('/reports/appointments', [ReportController::class, 'appointmentStats']);
+Route::get('/reports/species', [ReportController::class, 'speciesDistribution']);
+Route::get('/reports/veterinarians', [ReportController::class, 'veterinarianActivity']);
+Route::get('/reports/billings', [ReportController::class, 'billingStats']);
+Route::get('/reports/vaccinations', [ReportController::class, 'vaccinationStats']);
+Route::get('/reports/medical-records', [ReportController::class, 'medicalRecordStats']);
+Route::get('/reports/activity', [ReportController::class, 'globalActivity']);
+Route::get('/reports/export/appointments', [ReportController::class, 'exportAppointments']);
+
+Route::get('/settings', [SettingsController::class, 'index']);
+Route::get('/clinics/{clinicId}/settings', [SettingsController::class, 'getClinicSettings']);
+Route::put('/settings', [SettingsController::class, 'update']);
+Route::post('/settings/payment-methods', [SettingsController::class, 'addPaymentMethod']);
+Route::delete('/settings/payment-methods/{id}', [SettingsController::class, 'deletePaymentMethod']);
+
+Route::get('/inventory', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'index']);
+Route::post('/inventory', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'store']);
+Route::post('/inventory/upsert', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'upsert']);
+Route::put('/inventory/{vaccineInventory}', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'update']);
+Route::delete('/inventory/{vaccineInventory}', [\App\Http\Controllers\Api\VaccineInventoryController::class, 'destroy']);
+
+Route::apiResource('billings', \App\Http\Controllers\Api\BillingController::class);
+Route::get('billings/{billing}/download-proof', [\App\Http\Controllers\Api\BillingController::class, 'downloadProof']);

@@ -81,7 +81,10 @@ class AppointmentController extends Controller
                 'nullable',
                 'exists:users,id',
             ],
-            'clinic_id' => 'nullable|exists:users,id',
+            'clinic_id' => [
+                'nullable',
+                Rule::exists('users', 'id')->where('role', 'vet_clinic'),
+            ],
             'veterinarian_id' => 'required|exists:veterinarians,id',
             'appointment_date' => 'required|date|after_or_equal:today',
             'appointment_time' => 'required|date_format:H:i',
@@ -259,6 +262,26 @@ class AppointmentController extends Controller
                     'type' => 'appointment',
                 ]);
             }
+
+            // Automatically record transaction in reports if completed
+            if ($validated['status'] === 'completed') {
+                \App\Models\Billing::create([
+                    'invoice_number' => 'INV-' . strtoupper(\Illuminate\Support\Str::random(8)),
+                    'pet_id' => $appointment->pet_id,
+                    'owner_id' => $appointment->owner_id,
+                    'total_amount' => 0,
+                    'status' => 'pending',
+                    'billing_date' => now(),
+                    'items' => [
+                        [
+                            'description' => "Consultation: " . ($appointment->reason ?: 'General Checkup'),
+                            'quantity' => 1,
+                            'price' => 0
+                        ]
+                    ],
+                    'notes' => 'Automatically generated upon appointment completion.'
+                ]);
+            }
         }
 
         return response()->json($appointment->load(['pet', 'owner', 'veterinarian']));
@@ -298,7 +321,7 @@ class AppointmentController extends Controller
             $query->where('veterinarian_id', $linkedVetId);
         }
 
-        $appointments = $query->orderBy('appointment_time')->get();
+        $appointments = $query->orderBy('appointment_time')->paginate($request->integer('per_page', 20));
 
         return response()->json($appointments);
     }

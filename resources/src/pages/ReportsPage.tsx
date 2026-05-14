@@ -31,21 +31,38 @@ import {
   Download,
   Users,
   Stethoscope,
-  Loader2
+  Loader2,
+  CreditCard,
+  Syringe,
+  History,
+  TrendingUp,
+  History as HistoryIcon
 } from 'lucide-react';
-import { format, subDays, startOfMonth, endOfMonth } from 'date-fns';
+import { NavLink } from 'react-router-dom';
+import { cn } from '@/lib/utils';
+import { format, subDays, startOfMonth, endOfMonth, parse, isValid } from 'date-fns';
 import type { AppointmentStats, DashboardStats, SpeciesDistributionItem, VeterinarianActivityItem } from '@/types';
+
+const safeFormatDate = (dateStr: string | null | undefined) => {
+  if (!dateStr) return 'N/A';
+  const parsed = new Date(dateStr);
+  return isValid(parsed) ? format(parsed, 'MMM dd, yyyy') : 'N/A';
+};
 
 export default function ReportsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [dateRange, setDateRange] = useState<'week' | 'month' | 'all'>('month');
+  const [dateRange, setDateRange] = useState<'week' | 'month' | 'all'>('all');
   const [isLoading, setIsLoading] = useState(true);
   
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [apptStats, setApptStats] = useState<AppointmentStats | null>(null);
   const [speciesDistribution, setSpeciesDistribution] = useState<SpeciesDistributionItem[]>([]);
   const [vetActivity, setVetActivity] = useState<VeterinarianActivityItem[]>([]);
+  const [billingStats, setBillingStats] = useState<any>(null);
+  const [vaxStats, setVaxStats] = useState<any>(null);
+  const [medStats, setMedStats] = useState<any>(null);
+  const [globalActivity, setGlobalActivity] = useState<any[]>([]);
 
   const loadReports = useCallback(async () => {
     setIsLoading(true);
@@ -58,17 +75,25 @@ export default function ReportsPage() {
         end_date: format(end || new Date(), 'yyyy-MM-dd')
       } : {};
 
-      const [summary, appts, species, vets] = await Promise.all([
-        api.getDashboardData(),
-        api.getAppointmentStats(params),
-        api.getSpeciesDistribution(),
-        api.getVeterinarianActivity(params)
+      const [summary, appts, species, vets, billing, vax, med, activity] = await Promise.all([
+        api.getDashboardData().catch(() => ({ totalPets: 0, totalOwners: 0, totalAppointments: 0, todaysAppointments: 0, pendingAppointments: 0, completedAppointments: 0, totalVaccinations: 0, upcomingVaccinations: 0, totalMedicalRecords: 0, totalRevenue: 0 })),
+        api.getAppointmentStats(params).catch(() => null),
+        api.getSpeciesDistribution().catch(() => []),
+        api.getVeterinarianActivity(params).catch(() => []),
+        api.getBillingStats(params).catch(() => null),
+        api.getVaccinationStats(params).catch(() => null),
+        api.getMedicalRecordStats(params).catch(() => null),
+        api.getGlobalActivity(50).catch(() => [])
       ]);
 
       setStats(summary);
       setApptStats(appts);
       setSpeciesDistribution(species);
       setVetActivity(vets);
+      setBillingStats(billing);
+      setVaxStats(vax);
+      setMedStats(med);
+      setGlobalActivity(activity);
     } catch (error) {
       console.error('Failed to load reports:', error);
     } finally {
@@ -88,6 +113,7 @@ export default function ReportsPage() {
       </div>
     );
   }
+
 
   const exportAppointments = async () => {
     try {
@@ -120,8 +146,8 @@ export default function ReportsPage() {
     <div className="space-y-6 animate-fade-in pb-10" data-tour="reports-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Reports</h1>
-          <p className="text-muted-foreground">View clinic statistics and export reports from MySQL</p>
+          <h1 className="text-2xl font-bold">Comprehensive Clinic Reports</h1>
+          <p className="text-muted-foreground">Consolidated operational and financial analytics</p>
         </div>
         
         <Select value={dateRange} onValueChange={(v) => setDateRange(v as 'week' | 'month' | 'all')}>
@@ -132,15 +158,23 @@ export default function ReportsPage() {
           <SelectContent>
             <SelectItem value="week">Last 7 Days</SelectItem>
             <SelectItem value="month">This Month</SelectItem>
-            <SelectItem value="all">All Time</SelectItem>
+            <SelectItem value="all">All Time History</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       {/* Summary Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card className="bg-primary/5 border-primary/20">
+          <CardHeader className="pb-2">
+            <CardDescription className="flex items-center gap-2 text-primary">
+              <span className="h-2 w-2 rounded-full bg-primary"></span> Revenue (Collected)
+            </CardDescription>
+            <CardTitle className="text-3xl text-primary">₱{(billingStats?.totalRevenue || 0).toLocaleString()}</CardTitle>
+          </CardHeader>
+        </Card>
         <Card>
-          <CardHeader className="pb-2 text-center sm:text-left">
+          <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-blue-500"></span> Total Pets
             </CardDescription>
@@ -148,15 +182,7 @@ export default function ReportsPage() {
           </CardHeader>
         </Card>
         <Card>
-          <CardHeader className="pb-2 text-center sm:text-left">
-            <CardDescription className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-green-500"></span> Pet Owners
-            </CardDescription>
-            <CardTitle className="text-3xl">{stats.totalOwners}</CardTitle>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2 text-center sm:text-left">
+          <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-yellow-500"></span> Appointments
             </CardDescription>
@@ -164,7 +190,7 @@ export default function ReportsPage() {
           </CardHeader>
         </Card>
         <Card>
-          <CardHeader className="pb-2 text-center sm:text-left">
+          <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-purple-500"></span> Vaccinations
             </CardDescription>
@@ -176,9 +202,89 @@ export default function ReportsPage() {
       <Tabs defaultValue="appointments" className="space-y-4">
         <TabsList className="bg-muted p-1 rounded-lg">
           <TabsTrigger value="appointments">Appointments</TabsTrigger>
-          <TabsTrigger value="activity">Vet Activity</TabsTrigger>
-          <TabsTrigger value="pets">Pet Statistics</TabsTrigger>
+          <TabsTrigger value="financials">Financials</TabsTrigger>
+          <TabsTrigger value="clinical">Clinical Activity</TabsTrigger>
+          <TabsTrigger value="activity">Staff Activity</TabsTrigger>
+          <TabsTrigger value="activity-log">Operations Log</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="activity-log" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Operations Feed</CardTitle>
+              <CardDescription>Live stream of system-wide transactions and clinical actions</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-xl border border-slate-100 overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50/50">
+                      <TableHead>Operation Type</TableHead>
+                      <TableHead>Date & Time</TableHead>
+                      <TableHead>Patient / Owner</TableHead>
+                      <TableHead>Details</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {globalActivity.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                          No recent operations found.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      globalActivity.map((activity, idx) => (
+                        <TableRow key={`${activity.type}-${activity.id}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <div className={cn(
+                                "p-1.5 rounded-lg",
+                                activity.type === 'billing' ? "bg-emerald-100 text-emerald-600" :
+                                activity.type === 'vaccination' ? "bg-purple-100 text-purple-600" :
+                                activity.type === 'appointment' ? "bg-blue-100 text-blue-600" : "bg-amber-100 text-amber-600"
+                              )}>
+                                {activity.type === 'billing' ? <CreditCard className="h-3.5 w-3.5" /> :
+                                 activity.type === 'vaccination' ? <Syringe className="h-3.5 w-3.5" /> :
+                                 activity.type === 'appointment' ? <Calendar className="h-3.5 w-3.5" /> : <Stethoscope className="h-3.5 w-3.5" />}
+                              </div>
+                              <span className="capitalize font-semibold text-xs tracking-wide">
+                                {activity.type.replace('_', ' ')}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-500">
+                            {safeFormatDate(activity.createdAt)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-sm">
+                              <p className="font-bold">{activity.pet?.name || 'Walk-in'}</p>
+                              <p className="text-[10px] text-slate-400">Owner: {activity.owner?.name || activity.pet?.owner?.name || 'N/A'}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-xs max-w-[200px] truncate">
+                            {activity.type === 'billing' ? `Invoice #${activity.invoiceNumber} - ₱${activity.totalAmount}` :
+                             activity.type === 'vaccination' ? `Vax: ${activity.name}` :
+                             activity.type === 'appointment' ? `Appt: ${activity.reason || 'General'}` : `Diagnosis: ${activity.diagnosis || 'Recorded'}`}
+                          </TableCell>
+                          <TableCell className="text-right">
+                             <Button variant="ghost" size="sm" className="h-7 text-[10px] font-bold uppercase tracking-wider" asChild>
+                               <NavLink to={
+                                 activity.type === 'billing' ? '/billing' :
+                                 activity.type === 'vaccination' ? '/vaccinations' :
+                                 activity.type === 'appointment' ? '/appointments' : '/medical-records'
+                               }>View</NavLink>
+                             </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="appointments" className="space-y-4">
           <Card>
@@ -246,10 +352,134 @@ export default function ReportsPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="financials" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Paid Revenue</CardDescription>
+                <CardTitle className="text-2xl text-green-600">₱{(billingStats?.totalRevenue || 0).toLocaleString()}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground">Total collected funds in this period</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Outstanding Payments</CardDescription>
+                <CardTitle className="text-2xl text-yellow-600">₱{(billingStats?.totalPending || 0).toLocaleString()}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground">Pending invoices for this period</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-primary/5 border-primary/20">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-primary">Collection Efficiency</CardDescription>
+                <CardTitle className="text-2xl text-primary">
+                  {billingStats?.totalRevenue + billingStats?.totalPending > 0 
+                    ? ((billingStats.totalRevenue / (billingStats.totalRevenue + billingStats.totalPending)) * 100).toFixed(1)
+                    : 0}%
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden mt-1">
+                   <div 
+                     className="bg-primary h-full transition-all duration-1000" 
+                     style={{ width: `${(billingStats?.totalRevenue / (billingStats?.totalRevenue + billingStats?.totalPending || 1)) * 100}%` }} 
+                   />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue Stream</CardTitle>
+              <CardDescription>Daily collected revenue (paid invoices)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {billingStats?.dailyRevenue?.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {billingStats.dailyRevenue.map((day: any) => (
+                      <TableRow key={day.date}>
+                        <TableCell>{format(new Date(day.date), 'MMM dd, yyyy')}</TableCell>
+                        <TableCell className="text-right font-bold text-green-600">₱{Number(day.revenue).toLocaleString()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">No revenue recorded for this period.</div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="clinical" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Vaccination Activity</CardTitle>
+                <CardDescription>Most administered vaccines in this period</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Vaccine</TableHead>
+                      <TableHead className="text-right">Count</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {vaxStats?.byVaccine?.map((v: any) => (
+                      <TableRow key={v.name}>
+                        <TableCell>{v.name}</TableCell>
+                        <TableCell className="text-right font-bold">{v.count}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Consultation Volume</CardTitle>
+                <CardDescription>Daily medical record entries</CardDescription>
+              </CardHeader>
+              <CardContent>
+                 <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Consultations</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {medStats?.daily?.map((d: any) => (
+                      <TableRow key={d.date}>
+                        <TableCell>{format(new Date(d.date), 'MMM dd, yyyy')}</TableCell>
+                        <TableCell className="text-right font-bold">{d.count}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         <TabsContent value="activity" className="space-y-4">
           <Card>
             <CardHeader className="border-b pb-4">
-              <CardTitle>Veterinarian Activity</CardTitle>
+              <CardTitle>Staff Activity</CardTitle>
               <CardDescription>
                 Staff performance metrics for {dateRange === 'all' ? 'all time' : `this ${dateRange}`}
               </CardDescription>

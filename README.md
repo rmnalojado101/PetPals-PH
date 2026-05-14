@@ -1,78 +1,120 @@
-# PetPals PH - Veterinary Clinic Management System
+# 🐾 PetPals PH - Clinic Management System
 
-This is a modern full-stack web application built using **Laravel** (Backend) and **React + Vite** (Frontend).
-
-## Prerequisites
-
-Before running the application, make sure you have the following installed:
-- **Laragon** (with PHP >= 8.1 and MySQL configured)
-- **Composer** (PHP Package Manager)
-- **Node.js & npm** (Javascript Runtime and Package Manager)
-
-## Step-by-Step Guide to Access the System
-
-### 1. Start the Laragon Services
-1. Open **Laragon**.
-2. Click the **Start All** button. This will boot up your Apache/Nginx web server and your MySQL database. 
-3. *Note: Laragon automatically creates a local domain for folders inside `C:\laragon\www`. You will be able to access the Laravel backend using `http://petpals-ph.test` (if Laragon's Auto Virtual Hosts is enabled).*
-
-### 2. Configure Your Database
-1. Open Laragon and click on **Database** (this usually opens HeidiSQL or phpMyAdmin).
-2. Create a new database named **`petpals_ph`**.
-3. *This matches the configuration inside your `.env` file where `DB_DATABASE=petpals_ph`.*
-
-### 3. Open Your Terminal
-Open your terminal (PowerShell, Git Bash, or Laragon's Terminal) and make sure you are inside the project folder:
-```bash
-cd C:\laragon\www\Petpals-PH
-```
-
-### 4. Install Dependencies
-Run these commands to verify/install your dependencies for both the backend and frontend:
-```bash
-# Install PHP dependencies
-composer install
-
-# Install Node/React dependencies
-npm install
-```
-
-### 5. Setup Application Keys & Database
-Run these artisan commands to generate your app encryption key and create the database tables:
-```bash
-# Generate App Key (if not already done)
-php artisan key:generate
-
-# Run Database Migrations to create your tables
-php artisan migrate
-```
-
-### 6. Run the Development Servers
-Because this is a Laravel + Vite + React project, you need to run **two** things at the same time to have the full live-reloading experience.
-
-**Terminal 1 (Backend):**
-Serve the Laravel API.
-```bash
-php artisan serve
-```
-*The API will be available at `http://127.0.0.1:8000`.*
-
-**Terminal 2 (Frontend):**
-Open a new terminal tab/window in the same folder and start the Vite development server for React.
-```bash
-npm run dev
-```
-
-### 7. Accessing the Application
-
-Now that everything is running, open your web browser and go to:
-**👉 http://127.0.0.1:8000** (or `http://localhost:8000`)
-
-*If you are using Laragon's virtual host feature, you can also access it via **http://petpals-ph.test**!*
+PetPals PH is a premium, full-stack clinic management solution designed for veterinary practices. It streamlines patient records, vaccinations, billing, and appointments while ensuring data portability through a database-integrated storage system.
 
 ---
 
-## Demo Accounts
-Once the application loads, you can navigate to the Login page and use one of the demo roles (if database seeding was run, or use the Register form to create an Owner or Doctor account).
+## 🚀 Quick Start Guide
 
-Enjoy building PetPals PH! 🐾
+### 1. Prerequisites
+Ensure your development environment meets these requirements:
+*   **PHP:** v8.1 or higher
+*   **Node.js:** v18.x or higher (LTS recommended)
+*   **Database:** MySQL (via Laragon, XAMPP, or Docker)
+*   **Tools:** Composer, Git
+
+### 2. Installation & Setup
+
+#### **Step A: Clone & Backend Setup**
+1. Extract or clone the project into your local server directory (e.g., `C:\laragon\www\Petpals-PH`).
+2. Open a terminal in the project root and run:
+   ```bash
+   composer install
+   ```
+3. Initialize your environment file:
+   ```bash
+   copy .env.example .env
+   ```
+4. Generate the application encryption key:
+   ```bash
+   php artisan key:generate
+   ```
+
+#### **Step B: Frontend Setup**
+1. Install the required Node packages:
+   ```bash
+   npm install
+   ```
+
+---
+
+## 🗄️ Database Management
+
+### 1. Configuration
+Open your `.env` file and configure your database connection:
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=petpals_ph
+DB_USERNAME=root
+DB_PASSWORD=
+```
+
+### 2. Building the Schema
+Run the migrations and seeders to create all tables and default accounts (Admin, Clinic, etc.):
+```bash
+php artisan migrate:fresh --seed
+```
+
+---
+
+## 🛠️ Critical Server Configuration (Important!)
+
+Since PetPals PH utilizes **Base64 Database Storage** for all attachments (PDFs, Images, QR Codes), you must increase your server limits to handle larger data packets.
+
+### **PHP Optimization (`php.ini`)**
+Find your `php.ini` file in Laragon/XAMPP and update these values:
+*   `post_max_size = 64M`
+*   `upload_max_filesize = 64M`
+*   `memory_limit = 256M`
+*   `max_execution_time = 300`
+
+### **MySQL Optimization**
+If you experience "Packet too large" errors when uploading 10MB+ files, update your MySQL configuration (`my.ini`):
+*   `max_allowed_packet = 64M`
+
+---
+
+## 🖥️ Running the Application
+
+To run the system fully, you must have two terminals open:
+
+### **Terminal 1: Laravel Backend**
+```bash
+php artisan serve
+```
+*Accessible at: http://localhost:8000*
+
+### **Terminal 2: React Frontend (HMR)**
+```bash
+npm run dev
+```
+*Handles real-time UI updates and asset compilation.*
+
+---
+
+## ✨ Key Features
+*   **Consolidated Database Storage**: All medical attachments and QR codes are stored as Base64 strings in MySQL—no physical file management required.
+*   **Role-Based Access (RBAC)**: Distinct interfaces for Admins, Veterinarians, Clinic Staff, and Pet Owners.
+*   **Guided User Tours**: Automated onboarding for new Vets, Owners, and Staff.
+*   **Advanced Reporting**: Generate Vaccination, Billing, and Medical reports in PDF/CSV format.
+*   **Real-time Notifications**: Alerts for appointments and medical updates.
+
+---
+
+## 📂 Project Structure
+*   `app/Http/Controllers/Api`: Core backend logic and file processing.
+*   `resources/src/pages`: React UI components and routing.
+*   `resources/src/contexts`: State management for Auth and Tours.
+*   `database/migrations`: Schema definitions for the integrated storage system.
+
+---
+
+## 🆘 Troubleshooting
+*   **Unknown Database Error**: Ensure you have created a database named `petpals_ph` in MySQL before running migrations.
+*   **Tour Not Showing**: Tours are disabled for 'admin' users. Register as a 'vet_clinic' or 'owner' to see the walkthrough.
+*   **Vite Manifest Error**: Ensure `npm run dev` is running, or run `npm run build` for production mode.
+
+---
+*Developed with ❤️ for PetPals PH.*

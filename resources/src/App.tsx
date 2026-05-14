@@ -23,6 +23,11 @@ import NotificationsPage from "@/pages/NotificationsPage";
 import ReportsPage from "@/pages/ReportsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import ProfilePage from "@/pages/ProfilePage";
+import BillingPage from "@/pages/BillingPage";
+import VaccinationReportsPage from "@/pages/VaccinationReportsPage";
+import BillingReportsPage from "@/pages/BillingReportsPage";
+import AppointmentReportsPage from "@/pages/AppointmentReportsPage";
+import MedicalRecordReportsPage from "@/pages/MedicalRecordReportsPage";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -69,6 +74,7 @@ function AppRoutes() {
         <Route path="/vaccinations" element={<VaccinationsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/billing" element={<BillingPage />} />
         
         {/* Admin only routes */}
         <Route path="/users" element={
@@ -81,11 +87,33 @@ function AppRoutes() {
             <SettingsPage />
           </ProtectedRoute>
         } />
-        <Route path="/reports" element={
-          <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
-            <ReportsPage />
-          </ProtectedRoute>
-        } />
+        <Route path="/reports">
+          <Route index element={
+            <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
+              <ReportsPage />
+            </ProtectedRoute>
+          } />
+          <Route path="vaccinations" element={
+            <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
+              <VaccinationReportsPage />
+            </ProtectedRoute>
+          } />
+          <Route path="billing" element={
+            <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
+              <BillingReportsPage />
+            </ProtectedRoute>
+          } />
+          <Route path="appointments" element={
+            <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
+              <AppointmentReportsPage />
+            </ProtectedRoute>
+          } />
+          <Route path="medical-records" element={
+            <ProtectedRoute allowedRoles={['admin', 'vet_clinic']}>
+              <MedicalRecordReportsPage />
+            </ProtectedRoute>
+          } />
+        </Route>
       </Route>
 
       {/* 404 */}

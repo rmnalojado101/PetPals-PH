@@ -173,7 +173,7 @@ export default function SettingsPage() {
   const loadVets = async () => {
     try {
       const data = await api.getVeterinarians();
-      setVets(Array.isArray(data) ? data : []);
+      setVets(Array.isArray(data) ? data : (data as any).data ?? []);
     } catch (error) {
       console.error('Failed to load veterinarians:', error);
     }
@@ -184,7 +184,7 @@ export default function SettingsPage() {
 
     try {
       const data = await api.getInventory();
-      setInventory(Array.isArray(data) ? data : []);
+      setInventory(Array.isArray(data) ? data : (data as any).data ?? []);
     } catch (error) {
       console.error('Failed to load vaccine inventory:', error);
     } finally {
@@ -438,8 +438,8 @@ export default function SettingsPage() {
     <div className="space-y-6 animate-fade-in pb-10" data-tour="settings-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b pb-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-          <p className="text-muted-foreground">Manage clinic settings and configuration</p>
+          <h1 className="text-2xl font-bold tracking-tight">{user?.role === 'admin' ? 'System Settings' : 'Settings'}</h1>
+          <p className="text-muted-foreground">{user?.role === 'admin' ? 'Manage system-wide configuration and general information' : 'Manage clinic settings and configuration'}</p>
         </div>
 
         <Button onClick={handleSave} disabled={isSaving}>
@@ -457,39 +457,43 @@ export default function SettingsPage() {
               onClick={() => setActiveTab('general')}
             >
               <Building className="h-4 w-4" />
-              General Information
+              {user?.role === 'admin' ? 'System Information' : 'General Information'}
             </Button>
-            <Button
-              variant={activeTab === 'hours' ? 'secondary' : 'ghost'}
-              className="justify-start gap-2"
-              onClick={() => setActiveTab('hours')}
-            >
-              <Clock className="h-4 w-4" />
-              Operating Hours
-            </Button>
-            <Button
-              variant={activeTab === 'staff' ? 'secondary' : 'ghost'}
-              className="justify-start gap-2"
-              onClick={() => setActiveTab('staff')}
-            >
-              <UserPlus className="h-4 w-4" />
-              Veterinarians
-            </Button>
-            <Button
-              variant={activeTab === 'vaccines' ? 'secondary' : 'ghost'}
-              className="justify-start gap-2"
-              onClick={() => setActiveTab('vaccines')}
-            >
-              <Syringe className="h-4 w-4" />
-              Vaccine Database
-            </Button>
+            {user?.role !== 'admin' && (
+              <>
+                <Button
+                  variant={activeTab === 'hours' ? 'secondary' : 'ghost'}
+                  className="justify-start gap-2"
+                  onClick={() => setActiveTab('hours')}
+                >
+                  <Clock className="h-4 w-4" />
+                  Operating Hours
+                </Button>
+                <Button
+                  variant={activeTab === 'staff' ? 'secondary' : 'ghost'}
+                  className="justify-start gap-2"
+                  onClick={() => setActiveTab('staff')}
+                >
+                  <UserPlus className="h-4 w-4" />
+                  Veterinarians
+                </Button>
+                <Button
+                  variant={activeTab === 'vaccines' ? 'secondary' : 'ghost'}
+                  className="justify-start gap-2"
+                  onClick={() => setActiveTab('vaccines')}
+                >
+                  <Syringe className="h-4 w-4" />
+                  Vaccine Database
+                </Button>
+              </>
+            )}
             <Button
               variant={activeTab === 'system' ? 'secondary' : 'ghost'}
               className="justify-start gap-2"
               onClick={() => setActiveTab('system')}
             >
               <Monitor className="h-4 w-4" />
-              System Information
+              System Status
             </Button>
           </nav>
         </aside>
@@ -498,39 +502,157 @@ export default function SettingsPage() {
           {activeTab === 'general' && (
             <Card>
               <CardHeader>
-                <CardTitle>Clinic Information</CardTitle>
-                <CardDescription>Basic information about your clinic</CardDescription>
+                <CardTitle>{user?.role === 'admin' ? 'System General Information' : 'Clinic Information'}</CardTitle>
+                <CardDescription>
+                  {user?.role === 'admin' 
+                    ? 'Main configuration for the PetPals PH platform' 
+                    : 'Basic information about your clinic'}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Clinic Name</Label>
+                  <Label>{user?.role === 'admin' ? 'System Name' : 'Clinic Name'}</Label>
                   <Input
                     value={settings.name}
                     onChange={(e) => setSettings({ ...settings, name: e.target.value })}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Address</Label>
+                  <Label>{user?.role === 'admin' ? 'Headquarters Address' : 'Address'}</Label>
                   <Input
                     value={settings.address}
                     onChange={(e) => setSettings({ ...settings, address: e.target.value })}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Phone Number</Label>
+                  <Label>{user?.role === 'admin' ? 'Support Phone' : 'Phone Number'}</Label>
                   <Input
                     value={settings.phone}
                     onChange={(e) => setSettings({ ...settings, phone: e.target.value })}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Email</Label>
+                  <Label>{user?.role === 'admin' ? 'System Support Email' : 'Email'}</Label>
                   <Input
                     type="email"
                     value={settings.email}
                     onChange={(e) => setSettings({ ...settings, email: e.target.value })}
                   />
                 </div>
+
+                {user?.role !== 'admin' && (
+                  <div className="space-y-4 pt-4 border-t">
+                    <Label className="text-lg font-bold">Online Payment Methods</Label>
+                    <p className="text-sm text-muted-foreground">Add multiple payment options (GCash, Maya, etc.) for owners to choose from.</p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {(settings.paymentMethodsWithUrls || []).map((method: any) => (
+                        <div key={method.id} className="border rounded-xl p-4 bg-white shadow-sm flex items-center gap-4 group relative">
+                          <div className="bg-muted p-1 rounded-lg border">
+                            <img src={method.qrCodeUrl} alt={method.label} className="w-20 h-20 object-contain" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-bold text-primary">{method.label}</p>
+                            <p className="text-xs text-muted-foreground">Scan QR to pay</p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:bg-destructive/10"
+                            onClick={async () => {
+                              if (confirm(`Remove ${method.label}?`)) {
+                                try {
+                                  setIsSaving(true);
+                                  const updated = await api.deletePaymentMethod(method.id);
+                                  setSettings(updated);
+                                  toast({ title: 'Payment method removed' });
+                                } catch (err) {
+                                  toast({ title: 'Failed to remove', variant: 'destructive' });
+                                } finally {
+                                  setIsSaving(false);
+                                }
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+
+                      <div className="border-2 border-dashed rounded-xl p-4 flex flex-col gap-3 bg-muted/20">
+                        <div className="space-y-2">
+                          <Label className="text-xs font-bold uppercase text-muted-foreground">Add New Method</Label>
+                          <Input
+                            placeholder="e.g. GCash (09XX...)"
+                            id="new-method-label"
+                            className="bg-white"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            id="new-method-qr"
+                            className="bg-white text-xs"
+                            onChange={async (e) => {
+                              const labelInput = document.getElementById('new-method-label') as HTMLInputElement;
+                              const label = labelInput.value.trim();
+                              
+                              if (!label) {
+                                toast({ title: 'Missing Label', description: 'Please enter a name for this payment method first.', variant: 'destructive' });
+                                e.target.value = '';
+                                return;
+                              }
+
+                              if (e.target.files && e.target.files[0]) {
+                                const file = e.target.files[0];
+                                const formData = new FormData();
+                                formData.append('label', label);
+                                formData.append('qr_code', file);
+                                
+                                try {
+                                  setIsSaving(true);
+                                  const updated = await api.addPaymentMethod(formData);
+                                  setSettings(updated);
+                                  labelInput.value = '';
+                                  e.target.value = '';
+                                  toast({ title: 'Payment Method Added', description: `${label} is now available for owners.` });
+                                } catch (err) {
+                                  toast({ title: 'Upload Failed', variant: 'destructive' });
+                                } finally {
+                                  setIsSaving(false);
+                                }
+                              }
+                            }}
+                          />
+                          <p className="text-[10px] text-muted-foreground italic">Tip: The "Save" is automatic after you select a file!</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {user?.role === 'admin' && (
+                  <div className="space-y-4 pt-4 border-t">
+                    <Label className="text-lg font-bold">Platform Information</Label>
+                    <div className="space-y-2">
+                      <Label>About PetPals PH</Label>
+                      <Textarea 
+                        placeholder="Detailed description of the system..."
+                        className="min-h-[100px]"
+                        defaultValue="PetPals PH is a comprehensive Veterinary Clinic Management System designed to streamline operations for clinics and provide a seamless experience for pet owners."
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Terms of Service Summary</Label>
+                      <Textarea 
+                        placeholder="System terms and conditions..."
+                        className="min-h-[100px]"
+                        defaultValue="By using PetPals PH, clinics agree to maintain accurate records and respect owner privacy. Owners agree to provide valid information for their pets."
+                      />
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
@@ -1093,7 +1215,7 @@ export default function SettingsPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
                     <p className="text-sm text-muted-foreground">System Name</p>
-                    <p className="font-medium">PetPals PH</p>
+                    <p className="font-medium">{settings.name || 'Veterinary Clinic'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Version</p>

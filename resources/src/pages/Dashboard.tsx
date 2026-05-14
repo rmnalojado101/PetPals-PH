@@ -1,8 +1,9 @@
 import { useAuth } from '@/contexts/AuthContext';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Pet, Appointment, MedicalRecord, Vaccination, DashboardStats } from '@/types';
 import { api } from '@/lib/api';
 import { WelcomeBanner } from '@/components/dashboard/WelcomeBanner';
+import { AdminDashboard } from '@/components/dashboard/AdminDashboard';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { QuickActionCard } from '@/components/dashboard/QuickActionCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { 
   Heart, 
   Calendar, 
-  DollarSign, 
   AlertTriangle,
   TrendingUp,
   Clock,
@@ -35,32 +35,29 @@ export default function Dashboard() {
   const [myPetsList, setMyPetsList] = useState<Pet[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
+  const loadDashboardData = useCallback(async (showLoader = true) => {
     if (!user) return;
-    loadDashboardData();
-  }, [user]);
 
-  const loadDashboardData = async () => {
-    setIsLoading(true);
+    if (showLoader) {
+      setIsLoading(true);
+    }
+
     try {
-      // 1. Get Summary Stats
       const statsData = await api.getDashboardData();
       setStats(statsData);
 
-      // 2. Get Upcoming Appointments
       const appointmentsData = await api.getAppointmentsUpcoming();
       const appointmentsList = Array.isArray(appointmentsData)
         ? appointmentsData
         : (appointmentsData as any).data ?? [];
       setUpcomingAppointments(appointmentsList.slice(0, 5));
 
-      // 3. Get Recent Consultations (staff) or Pet list (owner)
       if (user.role !== 'owner') {
         const recordsData = await api.getMedicalRecords({ per_page: 5 });
         setRecentRecords(Array.isArray(recordsData) ? recordsData : (recordsData as any).data ?? []);
         
         const dueVax = await api.getVaccinationsDueSoon();
-        setDueVaccinations(dueVax);
+        setDueVaccinations(Array.isArray(dueVax) ? dueVax : (dueVax as any).data ?? []);
       } else {
         const petsData = await api.getPets({ per_page: 5 });
         setMyPetsList(Array.isArray(petsData) ? petsData : (petsData as any).data ?? []);
@@ -70,7 +67,23 @@ export default function Dashboard() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    void loadDashboardData();
+  }, [loadDashboardData]);
+
+  useEffect(() => {
+    const refresh = () => void loadDashboardData(false);
+    const intervalId = window.setInterval(refresh, 10000);
+
+    window.addEventListener('focus', refresh);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [loadDashboardData]);
 
   if (!user) return null;
 
@@ -79,6 +92,15 @@ export default function Dashboard() {
       <div className="flex flex-col items-center justify-center min-h-[60vh]">
         <Loader2 className="h-10 w-10 animate-spin text-primary opacity-50" />
         <p className="mt-4 text-muted-foreground">Syncing to MySQL Server...</p>
+      </div>
+    );
+  }
+
+  if (user.role === 'admin') {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <WelcomeBanner />
+        <AdminDashboard data={stats} />
       </div>
     );
   }
@@ -96,7 +118,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in" data-tour="dashboard-page">
       {/* Welcome Banner */}
       <WelcomeBanner />
 

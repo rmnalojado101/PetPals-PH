@@ -34,6 +34,11 @@ class Vaccination extends Model
         return $this->belongsTo(Veterinarian::class, 'administered_by');
     }
 
+    public function billing()
+    {
+        return $this->hasOne(Billing::class);
+    }
+
     public function scopeForPet($query, int $petId)
     {
         return $query->where('pet_id', $petId);

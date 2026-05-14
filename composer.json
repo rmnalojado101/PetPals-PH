@@ -6,6 +6,7 @@
     "php": "^8.1",
     "laravel/framework": "^10.0",
     "laravel/sanctum": "^3.3",
+    "laravel/tinker": "^2.8",
     "barryvdh/laravel-dompdf": "^2.0"
   },
   "require-dev": {

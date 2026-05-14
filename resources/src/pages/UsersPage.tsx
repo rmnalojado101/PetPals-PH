@@ -51,6 +51,8 @@ const ROLE_COLORS = {
   admin: 'bg-purple-100 text-purple-800',
   vet_clinic: 'bg-green-100 text-green-800',
   owner: 'bg-gray-100 text-gray-800',
+  veterinarian: 'bg-blue-100 text-blue-800',
+  receptionist: 'bg-orange-100 text-orange-800',
 };
 
 export default function UsersPage() {
@@ -79,8 +81,14 @@ export default function UsersPage() {
     setIsLoading(true);
     try {
       const response = await api.getUsers({ role: roleFilter !== 'all' ? roleFilter : undefined });
-      // Laravel returns a paginated object
-      setUsers(Array.isArray(response) ? response : (response as PaginatedResponse<User>).data); 
+      // The api.ts parseApiResponse already returns the .data array if paginated
+      if (Array.isArray(response)) {
+        setUsers(response);
+      } else if (response && typeof response === 'object' && 'data' in response) {
+        setUsers((response as any).data);
+      } else {
+        setUsers([]);
+      }
     } catch (error) {
       console.error('Failed to load users:', error);
     } finally {
@@ -294,6 +302,8 @@ export default function UsersPage() {
                     <SelectContent>
                       <SelectItem value="admin">System Administrator</SelectItem>
                       <SelectItem value="vet_clinic">Vet Clinic</SelectItem>
+                      <SelectItem value="veterinarian">Veterinarian</SelectItem>
+                      <SelectItem value="receptionist">Receptionist</SelectItem>
                       <SelectItem value="owner">Pet Owner</SelectItem>
                     </SelectContent>
                   </Select>
@@ -354,6 +364,8 @@ export default function UsersPage() {
                 <SelectItem value="all">All Roles</SelectItem>
                 <SelectItem value="admin">System Administrator</SelectItem>
                 <SelectItem value="vet_clinic">Vet Clinic</SelectItem>
+                <SelectItem value="veterinarian">Veterinarian</SelectItem>
+                <SelectItem value="receptionist">Receptionist</SelectItem>
                 <SelectItem value="owner">Pet Owner</SelectItem>
               </SelectContent>
             </Select>
@@ -408,7 +420,9 @@ export default function UsersPage() {
                     <TableCell>
                       <Badge className={ROLE_COLORS[user.role as keyof typeof ROLE_COLORS]}>
                         {user.role === 'vet_clinic' ? 'Vet Clinic' :
-                         user.role === 'admin' ? 'System Administrator' : 'Pet Owner'}
+                         user.role === 'admin' ? 'System Administrator' :
+                         user.role === 'veterinarian' ? 'Veterinarian' :
+                         user.role === 'receptionist' ? 'Receptionist' : 'Pet Owner'}
                       </Badge>
                     </TableCell>
                     <TableCell>{user.phone || '-'}</TableCell>

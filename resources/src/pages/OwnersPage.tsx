@@ -24,11 +24,13 @@ import {
   Users,
   Eye,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 export default function OwnersPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const ownerIdParam = searchParams.get('id');
 
   const [owners, setOwners] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,7 +49,7 @@ export default function OwnersPage() {
       // - vet_clinic → only owners who have an appointment with this clinic's vets
       // Each owner object already includes a `pets` array (eager-loaded by backend)
       const data = await api.getOwners();
-      setOwners(data);
+      setOwners(Array.isArray(data) ? data : (data as any).data ?? []);
     } catch (error) {
       console.error('Failed to load owners from API:', error);
     } finally {
@@ -56,18 +58,19 @@ export default function OwnersPage() {
   };
 
   const filteredOwners = owners.filter((owner) => {
-    return (
+    const matchesId = ownerIdParam ? String(owner.id) === ownerIdParam : true;
+    const matchesSearch = 
       owner.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       owner.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (owner.phone && owner.phone.includes(searchTerm))
-    );
+      (owner.phone && owner.phone.includes(searchTerm));
+    return matchesId && matchesSearch;
   });
 
   const { paginatedData, currentPage, totalPages, nextPage, prevPage } =
     usePagination(filteredOwners, 10);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in" data-tour="owners-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Pet Owners</h1>

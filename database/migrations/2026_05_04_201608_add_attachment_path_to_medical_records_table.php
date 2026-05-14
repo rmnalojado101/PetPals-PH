@@ -11,11 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('medical_records', function (Blueprint $table) {
-            $table->string('attachment_path')->nullable();
-            $table->text('diagnosis')->nullable()->change();
-            $table->text('treatment')->nullable()->change();
-        });
+        if (!Schema::hasColumn('medical_records', 'attachment_path')) {
+            Schema::table('medical_records', function (Blueprint $table) {
+                $table->string('attachment_path')->nullable()->after('follow_up_date');
+            });
+        }
     }
 
     /**
@@ -23,10 +23,10 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('medical_records', function (Blueprint $table) {
-            $table->dropColumn('attachment_path');
-            $table->text('diagnosis')->nullable(false)->change();
-            $table->text('treatment')->nullable(false)->change();
-        });
+        if (Schema::hasColumn('medical_records', 'attachment_path')) {
+            Schema::table('medical_records', function (Blueprint $table) {
+                $table->dropColumn('attachment_path');
+            });
+        }
     }
 };

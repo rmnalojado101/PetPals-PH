@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { User, UserRole } from '@/types';
-import { api } from '@/lib/api';
-import { initializeDataFromApi } from '@/lib/storage';
+import { api, clearAuthSession } from '@/lib/api';
 
 interface AuthContextType {
   user: User | null;
@@ -32,6 +31,17 @@ type RegisterInput = {
   role?: UserRole;
 };
 
+function isValidUser(value: unknown): value is User {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    'id' in value &&
+    'name' in value &&
+    'email' in value &&
+    'role' in value
+  );
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -44,18 +54,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const checkAuth = async () => {
-      const token = localStorage.getItem('auth_token');
-      if (token) {
-        try {
-          const userData = await api.getCurrentUser();
-          setUser(userData);
-          initializeDataFromApi().catch((error) => console.error('Could not initialize backend data', error));
-        } catch (error) {
-          localStorage.removeItem('auth_token');
-          setUser(null);
-        }
+      try {
+        // Try to get current user - if authenticated, httpOnly cookie will be sent automatically
+        const userData = await api.getCurrentUser();
+        setUser(isValidUser(userData) ? userData : null);
+      } catch (error) {
+        // Not authenticated or session expired
+        setUser(null);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
 
     checkAuth();
@@ -65,7 +73,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await api.login({ email, password });
       setUser(data.user);
-      initializeDataFromApi().catch((error) => console.error('Could not initialize backend data', error));
       return { success: true };
     } catch (error: unknown) {
       return { success: false, error: getErrorMessage(error, 'Login failed') };
@@ -81,7 +88,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
       const responseData = await api.register(registerData);
       setUser(responseData.user);
-      initializeDataFromApi().catch((error) => console.error('Could not initialize backend data', error));
       return { success: true };
     } catch (error: unknown) {
       return { success: false, error: getErrorMessage(error, 'Registration failed') };
@@ -94,8 +100,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      clearAuthSession();
       setUser(null);
-      localStorage.removeItem('auth_token');
     }
   }, []);
 

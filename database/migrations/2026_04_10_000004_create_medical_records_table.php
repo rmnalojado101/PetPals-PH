@@ -14,8 +14,8 @@ return new class extends Migration
             $table->foreignId('appointment_id')->nullable()->constrained()->onDelete('set null');
             $table->foreignId('veterinarian_id')->constrained('veterinarians')->onDelete('cascade');
             $table->date('record_date');
-            $table->text('diagnosis');
-            $table->text('treatment');
+            $table->text('diagnosis')->nullable();
+            $table->text('treatment')->nullable();
             $table->text('prescription')->nullable();
             $table->text('lab_results')->nullable();
             $table->text('notes')->nullable();

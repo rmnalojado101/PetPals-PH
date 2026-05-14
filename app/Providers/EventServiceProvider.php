@@ -14,5 +14,6 @@ class EventServiceProvider extends ServiceProvider
     public function boot(): void
     {
         parent::boot();
+        \App\Models\User::observe(\App\Observers\UserObserver::class);
     }
 }

@@ -24,15 +24,28 @@ class VaccinationController extends Controller
                 $q->where('owner_id', $user->id);
             });
         } elseif ($user->isVetClinic()) {
-            $query->whereHas('administeredByUser', function ($q) use ($user) {
-                $q->where('clinicId', $user->id);
+            $vetIds = Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $query->whereHas('pet.owner.appointmentsAsOwner', function ($q) use ($vetIds) {
+                $q->whereIn('veterinarian_id', $vetIds);
             });
         } elseif ($linkedVetId = $user->linkedVeterinarianId()) {
-            $query->where('administered_by', $linkedVetId);
+            $query->whereHas('pet.owner.appointmentsAsOwner', function ($q) use ($linkedVetId) {
+                $q->where('veterinarian_id', $linkedVetId);
+            });
         }
 
         if ($request->has('pet_id')) {
             $query->where('pet_id', $request->pet_id);
+        }
+
+        if ($request->has('unbilled')) {
+            $query->whereDoesntHave('billing', function($q) {
+                $q->where('status', '!=', 'cancelled');
+            });
+        }
+        
+        if ($request->has('start_date') && $request->has('end_date')) {
+            $query->whereBetween('date_administered', [$request->start_date, $request->end_date]);
         }
 
         $vaccinations = $query->orderBy('date_administered', 'desc')
@@ -49,12 +62,21 @@ class VaccinationController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        if ($user->isVetClinic() && optional($vaccination->administeredByUser)->clinicId !== $user->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        if (($linkedVetId = $user->linkedVeterinarianId()) && $vaccination->administered_by !== $linkedVetId) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        if ($user->isVetClinic()) {
+            $vetIds = Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $hasAppointment = $vaccination->pet->owner->appointmentsAsOwner()
+                ->whereIn('veterinarian_id', $vetIds)
+                ->exists();
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No clinic appointments with this owner.'], 403);
+            }
+        } elseif ($linkedVetId = $user->linkedVeterinarianId()) {
+            $hasAppointment = $vaccination->pet->owner->appointmentsAsOwner()
+                ->where('veterinarian_id', $linkedVetId)
+                ->exists();
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No veterinarian appointments with this owner.'], 403);
+            }
         }
 
         return response()->json($vaccination->load(['pet.owner', 'administeredByUser']));
@@ -90,7 +112,30 @@ class VaccinationController extends Controller
             $inventory = $this->reserveInventoryForVaccination($user, $veterinarian, $validated['name']);
             $inventory->decrement('stock');
 
-            return Vaccination::create($validated);
+            $vax = Vaccination::create($validated);
+
+            // Removed automatic billing generation as requested by user
+            /*
+            \App\Models\Billing::create([
+                'invoice_number' => 'INV-' . strtoupper(\Illuminate\Support\Str::random(8)),
+                'pet_id' => $vax->pet_id,
+                'owner_id' => $vax->pet->owner_id,
+                'vaccination_id' => $vax->id,
+                'total_amount' => 0, // Placeholder, can be edited in billing module
+                'status' => 'pending',
+                'billing_date' => $vax->date_administered,
+                'items' => [
+                    [
+                        'description' => "Vaccination: " . $vax->name,
+                        'quantity' => 1,
+                        'price' => 0
+                    ]
+                ],
+                'notes' => 'Automatically generated from vaccination record.'
+            ]);
+            */
+
+            return $vax;
         });
 
         if ($vaccination->next_due_date) {
@@ -176,14 +221,17 @@ class VaccinationController extends Controller
                 $q->where('owner_id', $user->id);
             });
         } elseif ($user->isVetClinic()) {
-            $query->whereHas('administeredByUser', function ($q) use ($user) {
-                $q->where('clinicId', $user->id);
+            $vetIds = Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $query->whereHas('pet.owner.appointmentsAsOwner', function ($q) use ($vetIds) {
+                $q->whereIn('veterinarian_id', $vetIds);
             });
         } elseif ($linkedVetId = $user->linkedVeterinarianId()) {
-            $query->where('administered_by', $linkedVetId);
+            $query->whereHas('pet.owner.appointmentsAsOwner', function ($q) use ($linkedVetId) {
+                $q->where('veterinarian_id', $linkedVetId);
+            });
         }
 
-        $vaccinations = $query->orderBy('next_due_date')->get();
+        $vaccinations = $query->orderBy('next_due_date')->paginate($request->integer('per_page', 10));
 
         return response()->json($vaccinations);
     }
@@ -199,14 +247,17 @@ class VaccinationController extends Controller
                 $q->where('owner_id', $user->id);
             });
         } elseif ($user->isVetClinic()) {
-            $query->whereHas('administeredByUser', function ($q) use ($user) {
-                $q->where('clinicId', $user->id);
+            $vetIds = Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $query->whereHas('pet.owner.appointmentsAsOwner', function ($q) use ($vetIds) {
+                $q->whereIn('veterinarian_id', $vetIds);
             });
         } elseif ($linkedVetId = $user->linkedVeterinarianId()) {
-            $query->where('administered_by', $linkedVetId);
+            $query->whereHas('pet.owner.appointmentsAsOwner', function ($q) use ($linkedVetId) {
+                $q->where('veterinarian_id', $linkedVetId);
+            });
         }
 
-        $vaccinations = $query->orderBy('next_due_date')->get();
+        $vaccinations = $query->orderBy('next_due_date')->paginate($request->integer('per_page', 10));
 
         return response()->json($vaccinations);
     }

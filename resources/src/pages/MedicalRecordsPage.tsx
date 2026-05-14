@@ -115,9 +115,9 @@ export default function MedicalRecordsPage() {
     }
   }, [user, selectedOwnerId, selectedPet]);
 
-  // Load clinic vets for vet_clinic users (needed for the medical record form)
+  // Load clinic vets for vet_clinic and admin users (needed for the medical record form)
   useEffect(() => {
-    if (user?.role === 'vet_clinic') {
+    if (user?.role === 'vet_clinic' || user?.role === 'admin') {
       api.getVeterinarians().then(vets => {
         const arr = Array.isArray(vets) ? vets : (vets as any).data ?? [];
         setClinicVets(arr);
@@ -131,7 +131,7 @@ export default function MedicalRecordsPage() {
       // api.getOwners() applies server-side role-based filtering:
       // admin → all owners, vet_clinic → owners with appointments at this clinic
       const data = await api.getOwners();
-      setOwners(data);
+      setOwners(Array.isArray(data) ? data : (data as any).data ?? []);
     } catch (err) {
       console.error('Failed to load owners from API:', err);
       setOwners([]);
@@ -145,7 +145,8 @@ export default function MedicalRecordsPage() {
       setPets(list);
     } catch (err) {
       console.error('Failed to load pets from API:', err);
-      setPets(petsStorage.getByOwner(ownerId));
+      // No fallback to petsStorage since it's now async
+      setPets([]);
     }
   };
 
@@ -153,7 +154,7 @@ export default function MedicalRecordsPage() {
     try {
       // /api/pets/{id}/medical-history returns records filtered by role
       const data = await api.getPetHistory(petId);
-      const list: MedicalRecord[] = Array.isArray(data) ? data : [];
+      const list: MedicalRecord[] = Array.isArray(data) ? data : (data as any).data ?? [];
       list.sort((a, b) => {
         const dateA = (a as any).recordDate || (a as any).record_date || (a as any).date || '';
         const dateB = (b as any).recordDate || (b as any).record_date || (b as any).date || '';
@@ -275,7 +276,7 @@ export default function MedicalRecordsPage() {
   };
 
   const handleExportPDF = (record: MedicalRecord) => {
-    const r = record as any;
+    handleExportRecordPdf(record); /*
     // Data may come from API (embedded) or localStorage
     const pet = r.pet || petsStorage.getById(r.petId);
     const owner = r.pet?.owner || null;
@@ -327,32 +328,46 @@ export default function MedicalRecordsPage() {
       printWindow.document.write(content);
       printWindow.document.close();
       printWindow.print();
-    }
+    */
+  };
+
+  const handleExportRecordPdf = (record: MedicalRecord) => {
+    void (async () => {
+      try {
+        const blob = await api.downloadMedicalRecordPdf((record as any).id);
+        const url = window.URL.createObjectURL(blob);
+        const opened = window.open(url, '_blank', 'noopener,noreferrer');
+
+        if (!opened) {
+          const link = document.createElement('a');
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.download = `medical-record-${(record as any).id}.pdf`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+
+        window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+      } catch (err: any) {
+        toast({
+          title: 'Export Failed',
+          description: err?.message || 'Could not export medical record PDF',
+          variant: 'destructive',
+        });
+      }
+    })();
   };
 
   const handleDownloadAttachment = async (record: MedicalRecord) => {
     try {
-      const response = await fetch(`/api/medical-records/${(record as any).id}/download-attachment`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        }
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to download attachment');
-      }
-      
-      const blob = await response.blob();
+      const blob = await api.downloadMedicalRecordAttachment((record as any).id);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       
-      const disposition = response.headers.get('content-disposition');
-      let filename = `record-attachment-${(record as any).id}`;
-      if (disposition && disposition.indexOf('filename=') !== -1) {
-          filename = disposition.split('filename=')[1].replace(/"/g, '');
-      }
-      
+      const filename = `record-attachment-${(record as any).id}`;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
@@ -485,7 +500,7 @@ export default function MedicalRecordsPage() {
                 <TableCell>{(record as any).veterinarian?.name || (record as any).veterinarianName || 'Unknown Vet'}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    {(record as any).attachmentPath && (
+                    {(record as any).attachmentUrl && (
                       <Button variant="ghost" size="icon" onClick={() => handleDownloadAttachment(record)} title="Download Attachment">
                         <Paperclip className="h-4 w-4" />
                       </Button>
@@ -522,7 +537,7 @@ export default function MedicalRecordsPage() {
 };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in" data-tour="medical-records-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-2">
@@ -567,7 +582,7 @@ export default function MedicalRecordsPage() {
                       </PopoverContent>
                     </Popover>
                   </div>
-                  {user?.role === 'vet_clinic' && (
+                  {(user?.role === 'vet_clinic' || user?.role === 'admin') && (
                     <div className="space-y-2">
                       <Label>Veterinarian *</Label>
                       <Select 
@@ -590,21 +605,26 @@ export default function MedicalRecordsPage() {
                   )}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.1" value={formData.weight} onChange={(e) => setFormData({ ...formData, weight: e.target.value })} /></div>
-                    <div className="space-y-2"><Label>Temperature (°C)</Label><Input type="number" step="0.1" value={formData.temperature} onChange={(e) => setFormData({ ...formData, temperature: e.target.value })} /></div>
+                    <div className="space-y-2"><Label>Temperature (deg C)</Label><Input type="number" step="0.1" value={formData.temperature} onChange={(e) => setFormData({ ...formData, temperature: e.target.value })} /></div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Attachment (PDF/Word)</Label>
+                    <Label>Follow-up Date</Label>
+                    <Input type="date" value={formData.followUpDate} onChange={(e) => setFormData({ ...formData, followUpDate: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Attachment (Images/PDF/Word)</Label>
                     <Input 
                       type="file" 
-                      accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.txt,.jfif,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                       onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)}
                     />
-                    <p className="text-xs text-muted-foreground">Optional. Uploading a file replaces the need to type the Diagnosis and Treatment.</p>
+                    <p className="text-xs text-muted-foreground">Optional. Uploading a file (Image/Document) replaces the need to type the Diagnosis and Treatment.</p>
                   </div>
                   <div className="space-y-2"><Label>Diagnosis</Label><Textarea value={formData.diagnosis} onChange={(e) => setFormData({ ...formData, diagnosis: e.target.value })} rows={2} /></div>
                   <div className="space-y-2"><Label>Treatment</Label><Textarea value={formData.treatment} onChange={(e) => setFormData({ ...formData, treatment: e.target.value })} rows={2} /></div>
                   <div className="space-y-2"><Label>Prescription</Label><Textarea value={formData.prescription} onChange={(e) => setFormData({ ...formData, prescription: e.target.value })} rows={2} /></div>
-                  <div className="space-y-2"><Label>Additional Notes</Label><Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} /></div>
+                  <div className="space-y-2"><Label>Lab Results / Diagnostic Findings</Label><Textarea value={formData.labResults} onChange={(e) => setFormData({ ...formData, labResults: e.target.value })} rows={2} /></div>
+                  <div className="space-y-2"><Label>Additional Notes</Label><Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={3} /></div>
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
@@ -638,27 +658,47 @@ export default function MedicalRecordsPage() {
 
       {/* View Record Read-Only Modal */}
       <Dialog open={!!viewingRecord} onOpenChange={() => setViewingRecord(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Medical Record Details</DialogTitle></DialogHeader>
           {viewingRecord && (() => {
-            const pet = (viewingRecord as any).pet || petsStorage.getById((viewingRecord as any).petId);
+            // Pet data should be embedded in the viewingRecord from the API
+            const pet = (viewingRecord as any).pet;
+            const owner = (viewingRecord as any).pet?.owner;
             const vet = (viewingRecord as any).veterinarian;
+            const appointment = (viewingRecord as any).appointment;
             return (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div><Label className="text-muted-foreground">Date</Label><p className="font-medium">{(() => { const d = (viewingRecord as any).recordDate || viewingRecord.date; return d && isValid(new Date(d)) ? format(new Date(d), 'MMMM d, yyyy') : '-'; })()}</p></div>
                   <div><Label className="text-muted-foreground">Veterinarian</Label><p className="font-medium">{vet?.name}</p></div>
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><Label className="text-muted-foreground">Patient</Label><p className="font-medium">{pet?.name || 'Unknown Patient'}</p></div>
+                  <div><Label className="text-muted-foreground">Owner</Label><p className="font-medium">{owner?.name || 'Not available'}</p></div>
+                  <div><Label className="text-muted-foreground">Species / Breed</Label><p>{pet ? `${pet.species} / ${pet.breed}` : '-'}</p></div>
+                  <div><Label className="text-muted-foreground">Sex / Age</Label><p>{pet ? `${pet.sex || 'Unknown'} / ${pet.age ?? 'N/A'} year(s)` : '-'}</p></div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><Label className="text-muted-foreground">Weight</Label><p>{viewingRecord.weight ? `${viewingRecord.weight} kg` : 'Not recorded'}</p></div>
+                  <div><Label className="text-muted-foreground">Temperature</Label><p>{viewingRecord.temperature ? `${viewingRecord.temperature} deg C` : 'Not recorded'}</p></div>
+                  <div><Label className="text-muted-foreground">Follow-up Date</Label><p>{viewingRecord.followUpDate ? format(new Date(viewingRecord.followUpDate), 'MMMM d, yyyy') : 'Not scheduled'}</p></div>
+                  <div><Label className="text-muted-foreground">Attachment</Label><p>{viewingRecord.attachmentName || 'No attachment uploaded'}</p></div>
+                </div>
+                {appointment?.reason && <div><Label className="text-muted-foreground">Reason for Visit</Label><p>{appointment.reason}</p></div>}
                 <div><Label className="text-muted-foreground">Diagnosis</Label><p>{viewingRecord.diagnosis}</p></div>
                 <div><Label className="text-muted-foreground">Treatment</Label><p>{viewingRecord.treatment}</p></div>
                 {viewingRecord.prescription && <div><Label className="text-muted-foreground">Prescription</Label><p>{viewingRecord.prescription}</p></div>}
+                {viewingRecord.labResults && <div><Label className="text-muted-foreground">Lab Results / Diagnostic Findings</Label><p>{viewingRecord.labResults}</p></div>}
+                {pet?.allergies?.length > 0 && <div><Label className="text-muted-foreground">Known Allergies</Label><p>{pet.allergies.join(', ')}</p></div>}
+                {pet?.medicalNotes && <div><Label className="text-muted-foreground">Existing Medical Notes</Label><p>{pet.medicalNotes}</p></div>}
+                {viewingRecord.notes && <div><Label className="text-muted-foreground">Additional Notes</Label><p>{viewingRecord.notes}</p></div>}
                 <div className="flex justify-end gap-2">
-                  {(viewingRecord as any).attachmentPath && (
+                  {(viewingRecord as any).attachmentUrl && (
                     <Button variant="outline" onClick={() => handleDownloadAttachment(viewingRecord)}>
                       <Download className="mr-2 h-4 w-4" /> Download Attachment
                     </Button>
                   )}
-                  <Button variant="outline" onClick={() => handleExportPDF(viewingRecord)}><Download className="mr-2 h-4 w-4" /> Print / Export</Button>
+                  <Button variant="outline" onClick={() => handleExportPDF(viewingRecord)}><Download className="mr-2 h-4 w-4" /> Open PDF / Print</Button>
                 </div>
               </div>
             );

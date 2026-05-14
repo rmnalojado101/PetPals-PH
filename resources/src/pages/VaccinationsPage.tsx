@@ -101,6 +101,7 @@ function VaccinationsPageContent() {
   const [formData, setFormData] = useState({
     ownerId: '',
     petId: '',
+    veterinarianId: '',
     name: '',
     customName: '',
     dateAdministered: format(new Date(), 'yyyy-MM-dd'),
@@ -111,6 +112,7 @@ function VaccinationsPageContent() {
 
   const [allPets, setAllPets] = useState<Pet[]>([]);
   const [availableOwners, setAvailableOwners] = useState<User[]>([]);
+  const [availableVets, setAvailableVets] = useState<any[]>([]);
 
   useEffect(() => {
     loadVaccinations();
@@ -122,10 +124,13 @@ function VaccinationsPageContent() {
     if (!user) return;
     try {
       const ownersData = await api.getOwners();
-      setAvailableOwners(ownersData);
+      setAvailableOwners(Array.isArray(ownersData) ? ownersData : (ownersData as any).data ?? []);
       
       const petsData = await api.getPets({ per_page: 500 });
       setAllPets(Array.isArray(petsData) ? petsData : (petsData as any).data ?? []);
+
+      const vetsData = await api.getVeterinarians();
+      setAvailableVets(Array.isArray(vetsData) ? vetsData : (vetsData as any).data ?? []);
     } catch (err) {
       console.error('Failed to load context data', err);
     }
@@ -150,7 +155,7 @@ function VaccinationsPageContent() {
     if (user?.role === 'vet_clinic') {
       try {
         const data = await api.getInventory();
-        setInventory(data);
+        setInventory(Array.isArray(data) ? data : (data as any).data ?? []);
       } catch (error) {
         console.error('Failed loading inventory', error);
         toast({ title: 'Inventory Load Error', description: 'Could not load vaccine inventory.', variant: 'destructive' });
@@ -162,6 +167,7 @@ function VaccinationsPageContent() {
     setFormData({
       ownerId: user?.role === 'owner' ? user.id : '',
       petId: '',
+      veterinarianId: '',
       name: '',
       customName: '',
       dateAdministered: format(new Date(), 'yyyy-MM-dd'),
@@ -189,6 +195,7 @@ function VaccinationsPageContent() {
 
       const vaxPayload = {
         pet_id: formData.petId,
+        veterinarian_id: formData.veterinarianId || null,
         name: vaccineName,
         date_administered: formData.dateAdministered,
         next_due_date: formData.nextDueDate || null,
@@ -385,9 +392,8 @@ function VaccinationsPageContent() {
         </TableHeader>
         <TableBody>
           {data.map((vax) => {
-            const pet = (vax as any).pet || allPets.find(p => String(p.id) === String(vax.petId));
-            const ownerUser = pet?.owner || availableOwners.find(o => String(o.id) === String(pet?.ownerId));
-            const vetUser = (vax as any).administeredByVet || (vax as any).clinician;
+            const pet = vax.pet;
+            const ownerUser = pet?.owner;
             const status = getVaxStatus(vax);
             return (
               <TableRow key={vax.id}>
@@ -400,7 +406,7 @@ function VaccinationsPageContent() {
                 <TableCell>{vax.dateAdministered && isValid(new Date(vax.dateAdministered)) ? format(new Date(vax.dateAdministered), 'MMM d, yyyy') : '-'}</TableCell>
                 <TableCell>{vax.nextDueDate && isValid(new Date(vax.nextDueDate)) ? format(new Date(vax.nextDueDate), 'MMM d, yyyy') : '-'}</TableCell>
                 <TableCell><Badge variant={status === 'overdue' ? 'destructive' : status === 'due-soon' ? 'secondary' : 'outline'}>{status === 'overdue' ? 'Overdue' : status === 'due-soon' ? 'Due Soon' : 'Current'}</Badge></TableCell>
-                <TableCell><p>{vetUser?.name || 'Veterinarian'}</p></TableCell>
+                <TableCell><p>{vax.administeredByUser?.name || 'Veterinarian'}</p></TableCell>
                 {canEdit && (
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
@@ -418,7 +424,7 @@ function VaccinationsPageContent() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in" data-tour="vaccinations-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Vaccination</h1>
@@ -430,7 +436,7 @@ function VaccinationsPageContent() {
             <DialogTrigger asChild>
               <Button><Plus className="mr-2 h-4 w-4" /> Add Vaccination Log</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{editingVax ? 'Edit Record' : 'Administer Vaccine'}</DialogTitle>
                 <DialogDescription>Record a new injection sequence</DialogDescription>
@@ -441,13 +447,13 @@ function VaccinationsPageContent() {
                     <div className="space-y-2">
                       <Label>Owner *</Label>
                       <Select
-                        value={formData.ownerId}
+                        value={String(formData.ownerId)}
                         onValueChange={(value) => setFormData({ ...formData, ownerId: value, petId: '' })}
                       >
                         <SelectTrigger><SelectValue placeholder="Select owner" /></SelectTrigger>
                         <SelectContent>
                           {availableOwners.map((owner) => (
-                            <SelectItem key={owner.id} value={owner.id}>{owner.name} ({owner.email})</SelectItem>
+                            <SelectItem key={owner.id} value={String(owner.id)}>{owner.name} ({owner.email})</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -456,7 +462,7 @@ function VaccinationsPageContent() {
                   <div className="space-y-2">
                     <Label>Pet *</Label>
                     <Select
-                      value={formData.petId}
+                      value={String(formData.petId)}
                       onValueChange={(value) => setFormData({ ...formData, petId: value })}
                       disabled={user?.role !== 'owner' && !formData.ownerId}
                     >
@@ -464,7 +470,7 @@ function VaccinationsPageContent() {
                       <SelectContent>
                         {availablePets.length > 0 ? (
                           availablePets.map((pet) => (
-                            <SelectItem key={pet.id} value={pet.id}>{pet.name} ({pet.species})</SelectItem>
+                            <SelectItem key={pet.id} value={String(pet.id)}>{pet.name} ({pet.species})</SelectItem>
                           ))
                         ) : (
                           user?.role === 'owner' ? (
@@ -477,11 +483,54 @@ function VaccinationsPageContent() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Vaccine Name *</Label>
-                    <Select value={formData.name} onValueChange={(value) => setFormData({ ...formData, name: value })}>
-                      <SelectTrigger><SelectValue placeholder="Select vaccine" /></SelectTrigger>
+                    <Label>Veterinarian *</Label>
+                    <Select
+                      value={String(formData.veterinarianId)}
+                      onValueChange={(value) => setFormData({ ...formData, veterinarianId: value })}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Select veterinarian" /></SelectTrigger>
                       <SelectContent>
-                        {COMMON_VACCINES.map((vax) => (<SelectItem key={vax} value={vax}>{vax}</SelectItem>))}
+                        {availableVets.map((vet) => (
+                          <SelectItem key={vet.id} value={String(vet.id)}>{vet.name} ({vet.specialty || 'General'})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Vaccine Name *</Label>
+                    <Select 
+                      value={formData.name} 
+                      onValueChange={(value) => {
+                        // Find available batches for this vaccine
+                        const availableBatches = inventory.filter(i => i.name === value && i.stock > 0);
+                        const firstBatch = availableBatches[0];
+                        
+                        // Use the same value logic as SelectItem to ensure matching
+                        const batchValue = firstBatch ? (firstBatch.batch_number || `BATCH-${firstBatch.id}`) : '';
+
+                        setFormData({ 
+                          ...formData, 
+                          name: value,
+                          batchNumber: batchValue
+                        });
+
+                        if (firstBatch) {
+                          toast({
+                            title: "Stock Found",
+                            description: `Automatically assigned ${value} - Batch ${firstBatch.batch_number || 'N/A'}`,
+                          });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="bg-white border-primary/20">
+                        <SelectValue placeholder="Select vaccine from stock" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* Get unique vaccine names from inventory with stock */}
+                        {Array.from(new Set(inventory.filter(i => i.stock > 0).map(i => i.name))).map((name) => (
+                          <SelectItem key={name} value={name}>{name}</SelectItem>
+                        ))}
+                        <SelectItem value="Other">Other (Manual Entry)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -491,11 +540,90 @@ function VaccinationsPageContent() {
                       <Input value={formData.customName} onChange={(e) => setFormData({ ...formData, customName: e.target.value })} required />
                     </div>
                   )}
+
+                  {/* Batch/Lot Number Selection */}
+                  <div className="space-y-2">
+                    <Label>Batch/Lot Number *</Label>
+                    <Select
+                      value={formData.batchNumber || ""}
+                      onValueChange={(value) => setFormData({ ...formData, batchNumber: value })}
+                      disabled={!formData.name || inventory.filter(i => i.name === formData.name && i.stock > 0).length === 0}
+                    >
+                      <SelectTrigger className={`bg-white border-primary/20 h-auto py-3 px-4 ${!formData.name ? 'opacity-50' : ''}`}>
+                        <div className="flex justify-between items-center w-full overflow-hidden">
+                          <div className="flex flex-col text-left items-start overflow-hidden">
+                            {formData.batchNumber ? (
+                              <>
+                                <span className="font-bold text-[15px] text-slate-900 leading-none truncate">
+                                  {inventory.find(i => i.id.toString() === formData.batchNumber)?.batchNumber || 'Unnamed Batch'}
+                                </span>
+                                <span className="text-[11px] text-slate-400 font-medium mt-1">
+                                  {inventory.find(i => i.id.toString() === formData.batchNumber)?.description || 'none'}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-slate-400 text-sm">
+                                {!formData.name 
+                                  ? "Select a vaccine first..." 
+                                  : "Choose available batch..."}
+                              </span>
+                            )}
+                          </div>
+                          {formData.batchNumber && (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-bold ml-2 shrink-0">
+                              {inventory.find(i => i.id.toString() === formData.batchNumber)?.stock} LEFT
+                            </Badge>
+                          )}
+                        </div>
+                      </SelectTrigger>
+                      <SelectContent className="pt-0">
+                        <div className="px-5 py-3 bg-slate-50/50 border-b border-slate-100 mb-1 flex justify-between items-center">
+                          <span className="text-sm font-bold text-slate-500 uppercase tracking-wider text-[10px]">Available Batch / Lot</span>
+                          {formData.name && (
+                            <span className="text-[10px] font-bold text-primary bg-primary/5 px-2 py-0.5 rounded">
+                              {formData.name}
+                            </span>
+                          )}
+                        </div>
+                        {inventory
+                          .filter(i => i.name === formData.name && i.stock > 0)
+                          .map((item, index, array) => (
+                            <SelectItem 
+                              key={item.id} 
+                              value={item.id.toString()}
+                              className={`py-4 px-5 focus:bg-slate-50 cursor-pointer rounded-none ${index !== array.length - 1 ? 'border-b border-slate-100' : ''}`}
+                            >
+                              <div className="flex justify-between items-center w-full gap-4">
+                                <div className="flex flex-col text-left">
+                                  <span className="font-bold text-[17px] text-slate-900 leading-tight">
+                                    {item.batchNumber || 'Unnamed Batch'}
+                                  </span>
+                                  <span className="text-sm text-slate-400 font-medium mt-1">
+                                    {item.description || 'none'}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col items-end gap-1">
+                                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-bold whitespace-nowrap">
+                                    {item.stock} LEFT
+                                  </Badge>
+                                  {item.expirationDate && (
+                                    <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                                      Exp: {format(new Date(item.expirationDate), 'MMM yyyy')}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </SelectItem>
+                          ))
+                        }
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2"><Label>Date Administered *</Label><Input type="date" value={formData.dateAdministered} onChange={(e) => setFormData({ ...formData, dateAdministered: e.target.value })} required /></div>
                     <div className="space-y-2"><Label>Next Due Date</Label><Input type="date" value={formData.nextDueDate} onChange={(e) => setFormData({ ...formData, nextDueDate: e.target.value })} /></div>
                   </div>
-                  <div className="space-y-2"><Label>Batch/Lot Number</Label><Input value={formData.batchNumber} onChange={(e) => setFormData({ ...formData, batchNumber: e.target.value })} /></div>
                   <div className="space-y-2"><Label>Notes</Label><Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} /></div>
                 </div>
                 <DialogFooter><Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button><Button type="submit">{editingVax ? 'Update' : 'Confirm Injection'}</Button></DialogFooter>

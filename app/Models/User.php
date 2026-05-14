@@ -66,9 +66,9 @@ class User extends Authenticatable
         return $this->hasMany(Veterinarian::class, 'clinicId');
     }
 
-    public function scopeVeterinarians($query)
+    public function clinicSettings()
     {
-        return $query->where('role', 'veterinarian');
+        return $this->hasOne(ClinicSettings::class, 'clinic_id');
     }
 
     public function scopeClinics($query)
@@ -83,7 +83,7 @@ class User extends Authenticatable
 
     public function scopeStaff($query)
     {
-        return $query->whereIn('role', ['admin', 'veterinarian', 'receptionist']);
+        return $query->whereIn('role', ['admin', 'vet_clinic']);
     }
 
     public function isAdmin(): bool
@@ -91,19 +91,14 @@ class User extends Authenticatable
         return $this->role === 'admin';
     }
 
-    public function isVeterinarian(): bool
-    {
-        return $this->role === 'veterinarian';
-    }
-
-    public function isReceptionist(): bool
-    {
-        return $this->role === 'receptionist';
-    }
-
     public function isOwner(): bool
     {
         return $this->role === 'owner';
+    }
+
+    public function isVetClinic(): bool
+    {
+        return $this->role === 'vet_clinic';
     }
 
     public function canManageUsers(): bool
@@ -113,41 +108,26 @@ class User extends Authenticatable
 
     public function canManageAppointments(): bool
     {
-        return in_array($this->role, ['admin', 'veterinarian', 'receptionist']);
+        return in_array($this->role, ['admin', 'vet_clinic']);
     }
 
     public function canViewMedicalRecords(): bool
     {
-        return in_array($this->role, ['admin', 'veterinarian']);
+        return in_array($this->role, ['admin', 'vet_clinic']);
     }
 
     public function canCreateMedicalRecords(): bool
     {
-        return $this->isVeterinarian();
-    }
-
-    public function isVetClinic(): bool
-    {
-        return $this->role === 'vet_clinic';
+        return in_array($this->role, ['admin', 'vet_clinic']);
     }
 
     public function linkedVeterinarian(): ?Veterinarian
     {
-        if (!$this->isVeterinarian()) {
-            return null;
-        }
-
-        return Veterinarian::query()
-            ->where('email', $this->email)
-            ->orWhere(function ($query) {
-                $query->whereNull('email')
-                    ->where('name', $this->name);
-            })
-            ->first();
+        return null;
     }
 
     public function linkedVeterinarianId(): ?int
     {
-        return $this->linkedVeterinarian()?->id;
+        return null;
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -30,6 +31,9 @@ class AuthController extends Controller
             'address' => $validated['address'] ?? null,
         ]);
 
+        Auth::login($user);
+        $request->session()->regenerate();
+
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -54,6 +58,9 @@ class AuthController extends Controller
             ]);
         }
 
+        Auth::login($user);
+        $request->session()->regenerate();
+
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -65,12 +72,28 @@ class AuthController extends Controller
 
     public function user(Request $request)
     {
-        return response()->json($request->user());
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        return response()->json($user);
     }
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        $user = $request->user();
+
+        if ($user && $user->currentAccessToken()) {
+            $user->currentAccessToken()->delete();
+        }
+
+        Auth::logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
 
         return response()->json([
             'message' => 'Logged out successfully',

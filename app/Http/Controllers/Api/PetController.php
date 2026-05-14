@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Pet;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -15,12 +14,25 @@ class PetController extends Controller
         $user = $request->user();
         $query = Pet::with('owner');
 
-        if ($user->isOwner()) {
+        if ($user && $user->isOwner()) {
             $query->where('owner_id', $user->id);
+        } elseif ($user && $user->isVetClinic()) {
+            $vetIds = \App\Models\Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $query->whereHas('owner.appointmentsAsOwner', function ($q) use ($vetIds) {
+                $q->whereIn('veterinarian_id', $vetIds);
+            });
+        } elseif ($user && ($linkedVetId = $user->linkedVeterinarianId())) {
+            $query->whereHas('owner.appointmentsAsOwner', function ($q) use ($linkedVetId) {
+                $q->where('veterinarian_id', $linkedVetId);
+            });
         }
 
-        if ($request->has('owner_id') && !$user->isOwner()) {
+        if ($request->has('owner_id') && (!$user || !$user->isOwner())) {
             $query->where('owner_id', $request->owner_id);
+        }
+
+        if ($request->has('id')) {
+            $query->where('id', $request->id);
         }
 
         if ($request->has('species')) {
@@ -45,8 +57,25 @@ class PetController extends Controller
     {
         $user = $request->user();
 
-        if ($user->isOwner() && $pet->owner_id !== $user->id) {
+        if ($user && $user->isOwner() && $pet->owner_id !== $user->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        if ($user && $user->isVetClinic()) {
+            $vetIds = \App\Models\Veterinarian::where('clinicId', $user->id)->pluck('id');
+            $hasAppointment = $pet->owner->appointmentsAsOwner()
+                ->whereIn('veterinarian_id', $vetIds)
+                ->exists();
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No clinic appointments with this pet owner.'], 403);
+            }
+        } elseif ($user && ($linkedVetId = $user->linkedVeterinarianId())) {
+            $hasAppointment = $pet->owner->appointmentsAsOwner()
+                ->where('veterinarian_id', $linkedVetId)
+                ->exists();
+            if (!$hasAppointment) {
+                return response()->json(['message' => 'Unauthorized. No veterinarian appointments with this pet owner.'], 403);
+            }
         }
 
         return response()->json($pet->load([
@@ -63,9 +92,9 @@ class PetController extends Controller
 
         $validated = $request->validate([
             'owner_id' => [
-                Rule::requiredIf(!$user->isOwner()),
-                'nullable',
-                'exists:users,id',
+                $user && $user->isOwner() ? 'nullable' : 'required',
+                'integer',
+                Rule::exists('users', 'id')->where('role', 'owner'),
             ],
             'name' => 'required|string|max:255',
             'species' => 'required|in:dog,cat,bird,rabbit,hamster,fish,reptile,other',
@@ -74,20 +103,14 @@ class PetController extends Controller
             'sex' => 'required|in:male,female',
             'weight' => 'nullable|numeric|min:0',
             'color' => 'nullable|string|max:100',
-            'microchip_id' => 'nullable|string|max:50|unique:pets',
+            'microchip_id' => 'nullable|string|max:50|unique:pets,microchip_id',
             'allergies' => 'nullable|array',
             'medical_notes' => 'nullable|string',
             'photo' => 'nullable|string',
         ]);
 
-        if ($user->isOwner()) {
+        if ($user && $user->isOwner()) {
             $validated['owner_id'] = $user->id;
-        }
-
-        $owner = User::owners()->find($validated['owner_id']);
-
-        if (!$owner) {
-            return response()->json(['message' => 'Selected owner is invalid'], 422);
         }
 
         $pet = Pet::create($validated);
@@ -99,7 +122,7 @@ class PetController extends Controller
     {
         $user = $request->user();
 
-        if ($user->isOwner() && $pet->owner_id !== $user->id) {
+        if ($user && $user->isOwner() && $pet->owner_id !== $user->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
@@ -126,7 +149,7 @@ class PetController extends Controller
     {
         $user = $request->user();
 
-        if ($user->isOwner() && $pet->owner_id !== $user->id) {
+        if ($user && $user->isOwner() && $pet->owner_id !== $user->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
